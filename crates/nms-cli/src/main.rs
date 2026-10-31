@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use nms_format::metadata::{Metadata, Slot};
 use nms_format::SaveFile;
-use nms_model::{ByteDiff, Document, KeyMap};
+use nms_model::{Document, KeyMap};
 
 const USAGE: &str = "\
 nmsedit — No Man's Sky save tool
@@ -216,82 +216,134 @@ fn cmd_slots(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Outcome of checking one file.
+struct VerifyRow {
+    name: String,
+    kind: String,
+    payload: String,
+    container: String,
+    document: String,
+    ok: bool,
+}
+
 fn cmd_verify(args: &[String]) -> Result<(), String> {
     let dir = require_path(args, 1)?;
     let entries = list_dir(&dir)?;
-    let mut checked = 0usize;
-    let mut failures = 0usize;
-
-    println!("{:<16} {:>12} {:>12}  {}", "file", "bytes", "re-encoded", "result");
+    let mut rows = Vec::new();
 
     for name in entries.iter().filter(|n| n.ends_with(".hg")) {
         let path = dir.join(name);
         let Ok(raw) = std::fs::read(&path) else { continue };
-
-        let result = if let Some(slot) = Slot::from_metadata_file_name(name) {
-            match Metadata::read(&raw, slot) {
-                Ok(meta) => match meta.to_bytes() {
-                    Ok(again) => ByteDiff::compute(&raw, &again),
-                    Err(e) => {
-                        println!("{name:<16} {:>12} {:>12}  ERROR {e}", raw.len(), "-");
-                        failures += 1;
-                        continue;
-                    }
-                },
-                Err(e) => {
-                    println!("{name:<16} {:>12} {:>12}  ERROR {e}", raw.len(), "-");
-                    failures += 1;
-                    continue;
-                }
-            }
-        } else {
-            match SaveFile::from_bytes(&raw) {
-                Ok(save) => {
-                    let again = save.to_bytes();
-                    ByteDiff::compute(&raw, &again)
-                }
-                Err(e) => {
-                    println!("{name:<16} {:>12} {:>12}  ERROR {e}", raw.len(), "-");
-                    failures += 1;
-                    continue;
-                }
-            }
-        };
-
-        // For a save with edits, round-tripping the document must reproduce the
-        // payload exactly when nothing was changed.
-        let document_result = if Slot::from_metadata_file_name(name).is_some() {
-            None
-        } else {
-            match SaveFile::from_bytes(&raw).map_err(|e| e.to_string()).and_then(|s| {
-                Document::parse(&s.payload).map_err(|e| e.to_string()).and_then(|doc| {
-                    doc.payload().map_err(|e| e.to_string()).map(|p| (s, doc, p))
-                })
-            }) {
-                Ok((s, doc, payload)) => Some(ByteDiff::compute(&s.payload, &payload).is_identical() && doc.key_count() > 0),
-                Err(_) => Some(false),
-            }
-        };
-
-        let ok = result.is_identical() && document_result.unwrap_or(true);
-        let note = if ok {
-            "ok".to_string()
-        } else {
-            failures += 1;
-            format!("FAIL {}", result.summary())
-        };
-        println!("{name:<16} {:>12} {:>12}  {}", raw.len(), result.len_b, note);
-        checked += 1;
+        rows.push(verify_one(name, &raw));
     }
 
-    if checked == 0 {
+    if rows.is_empty() {
         return Err(format!("no .hg files found in {}", dir.display()));
     }
-    println!("\n{checked} files checked, {failures} failures");
+
+    println!(
+        "{:<16} {:<11} {:>12}  {:<22} {:<10} {}",
+        "file", "container", "payload", "container check", "document", "result"
+    );
+    let mut failures = 0usize;
+    for row in &rows {
+        if !row.ok {
+            failures += 1;
+        }
+        println!(
+            "{:<16} {:<11} {:>12}  {:<22} {:<10} {}",
+            row.name,
+            row.kind,
+            row.payload,
+            row.container,
+            row.document,
+            if row.ok { "ok" } else { "FAIL" }
+        );
+    }
+
+    println!("\n{} files checked, {failures} failures", rows.len());
+    println!("note: block containers are re-compressed, not byte-reproduced; the payload is what must match.");
     if failures > 0 {
-        return Err("round-trip fidelity check failed".into());
+        return Err("fidelity check failed".into());
     }
     Ok(())
+}
+
+/// Check one file against the guarantee that applies to its kind.
+///
+/// * metadata: decryption + re-encryption must reproduce the file exactly;
+/// * plain JSON: the file is the payload, so it must round-trip byte-exactly;
+/// * block stream: the payload must survive re-encoding, and the document layer
+///   must return the original payload when nothing was edited.
+fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
+    let mut row = VerifyRow {
+        name: name.to_string(),
+        kind: "?".into(),
+        payload: "-".into(),
+        container: "-".into(),
+        document: "-".into(),
+        ok: false,
+    };
+
+    if let Some(slot) = Slot::from_metadata_file_name(name) {
+        row.kind = "metadata".into();
+        match Metadata::read(raw, slot) {
+            Ok(meta) => {
+                row.payload = meta.words.len().to_string() + " words";
+                match meta.to_bytes() {
+                    Ok(again) if again == raw => {
+                        row.container = "byte-exact".into();
+                        row.document = "n/a".into();
+                        row.ok = true;
+                    }
+                    Ok(_) => row.container = "re-encrypt differs".into(),
+                    Err(e) => row.container = format!("error: {e}"),
+                }
+            }
+            Err(e) => row.container = format!("error: {e}"),
+        }
+        return row;
+    }
+
+    match SaveFile::from_bytes(raw) {
+        Ok(save) => {
+            row.kind = save.container.name().into();
+            row.payload = save.payload.len().to_string();
+
+            let reparsed = SaveFile::from_bytes(&save.to_bytes());
+            row.container = match &reparsed {
+                Ok(again) if again.stored_payload() == save.stored_payload() => {
+                    if save.container == nms_format::Container::PlainJson {
+                        if save.to_bytes() == raw {
+                            "byte-exact".into()
+                        } else {
+                            "plain json differs".into()
+                        }
+                    } else {
+                        format!("payload ok ({} B)", save.to_bytes().len())
+                    }
+                }
+                Ok(_) => "payload changed".into(),
+                Err(e) => format!("error: {e}"),
+            };
+
+            row.document = match Document::parse(&save.payload)
+                .map_err(|e| e.to_string())
+                .and_then(|doc| doc.payload().map_err(|e| e.to_string()).map(|p| (doc, p)))
+            {
+                Ok((doc, payload)) if payload == save.payload && doc.key_count() > 0 => "round-trips".into(),
+                Ok(_) => "payload changed".into(),
+                Err(e) => format!("error: {e}"),
+            };
+
+            row.ok = !row.container.contains("differs")
+                && !row.container.contains("changed")
+                && !row.container.starts_with("error")
+                && row.document == "round-trips";
+        }
+        Err(e) => row.container = format!("error: {e}"),
+    }
+    row
 }
 
 fn cmd_mapping(args: &[String]) -> Result<(), String> {
