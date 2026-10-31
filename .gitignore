@@ -1,0 +1,14 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Save fixtures contain personal data (player names, account IDs, GUIDs).
+# Only the README and any generated synthetic fixtures are tracked.
+/fixtures/**
+!/fixtures/README.md
+
+# Local scratch
+/tmp/
+*.log
+.DS_Store

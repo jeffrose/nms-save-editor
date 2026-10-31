@@ -1,0 +1,17 @@
+[package]
+name = "nms-cli"
+description = "Command-line tool for inspecting and verifying No Man's Sky save files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nmsedit"
+path = "src/main.rs"
+
+[dependencies]
+nms-format.workspace = true
+nms-model.workspace = true
+serde_json.workspace = true
