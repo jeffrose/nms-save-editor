@@ -6,6 +6,15 @@ That test needs a real game install, and on PC the saves sit inside the Steam
 Cloud-synced Proton prefix, where a careless test propagates to every machine on
 the account.
 
+## Current rule: live folders are off-limits
+
+Until the user says otherwise, no test, script or agent touches the real save
+folder (`~/.steam/.../compatdata/275850/...`). Every check goes through the
+sandbox below, which runs on copies. The edit layer enforces this in code:
+a path that looks like a live save location is refused unless
+`--confirm-live` is passed, and a directory tree that carries a
+`.nmsedit-sandbox` marker is exempt so saved copies stay easy to work with.
+
 ## Rules
 
 1. **Never test in the live save folder.** Steam Cloud syncs

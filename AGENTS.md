@@ -20,6 +20,28 @@ Fixture tests skip with a message when `fixtures/` is empty, so a clean clone
 passes without them. They are the load-bearing tests: run them in release mode
 (a full set is ~40 MB of JSON and compression).
 
+## Live save folders are off-limits
+
+**Do not write to the machine's real game save folders, and do not use them as
+test input.** On this machine that means anything under
+`~/.steam/debian-installation/steamapps/compatdata/275850/...` and
+`.../AppData/Roaming/HelloGames/NMS/...`. Reading them only to confirm they are
+still untouched is fine.
+
+The reason is Steam Cloud: it syncs that prefix, so a test edit is uploaded and
+lands on every machine signed into the account. There is no undo inside this
+process, and the failure appears on hardware we cannot reach.
+
+Work on copies instead:
+
+* `fixtures/` holds real saves for reading; tests copy them to temp directories.
+* `tools/sandbox-test.sh` runs the game against a throwaway prefix and declares
+  that tree a scratch copy with a `.nmsedit-sandbox` marker.
+* The edit layer refuses a live location unless `confirm_live` /
+  `--confirm-live` is passed (`crates/nms-edit/src/safety.rs`). Do not pass it
+  without asking the user first.
+* This rule relaxes only when the user says we have enough confidence.
+
 ## The invariant that must not break
 
 **An unedited save is never modified, and an edited save changes only what was

@@ -8,6 +8,7 @@ use nms_model::{ByteDiff, Document, KeyMap, ModelError, PathError, SaveInfo, Tre
 use serde_json::Value;
 
 use crate::backup::{BackupEntry, BackupStore};
+use crate::safety;
 use crate::EditError;
 
 /// Metadata version word offset for player saves (`JSON Version - 512`).
@@ -118,11 +119,17 @@ pub struct CommitOptions {
     pub timestamp: Option<u64>,
     /// Compute the plan but do not write anything.
     pub dry_run: bool,
+    /// Accept writing to a live, cloud-synced save location.
+    ///
+    /// See [`crate::safety`]: without this the commit refuses a path that looks
+    /// like the game's own save folder, because Steam Cloud would propagate the
+    /// change to every machine on the account.
+    pub confirm_live: bool,
 }
 
 impl Default for CommitOptions {
     fn default() -> Self {
-        CommitOptions { backup_root: None, keep_backups: 10, timestamp: None, dry_run: false }
+        CommitOptions { backup_root: None, keep_backups: 10, timestamp: None, dry_run: false, confirm_live: false }
     }
 }
 
@@ -268,6 +275,9 @@ impl SaveBundle {
         if plan.is_noop() || options.dry_run {
             return Ok(report);
         }
+
+        // Refuse a live save folder unless the caller said so explicitly.
+        safety::check_write(&self.data_path, options.confirm_live).map_err(EditError::LiveSave)?;
 
         if let Some(root) = &options.backup_root {
             let store = BackupStore::new(root.clone(), options.keep_backups);

@@ -91,6 +91,11 @@ Verified against 62 real files from a live 7.x save set:
    keep a copy of what they replace, so undoing an undo is possible too.
 7. **Changes are reported by field, not by byte count**
    (`CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha`).
+8. **Live save folders are refused by default.** A path that looks like the
+   game's own save folder (or a Steam-managed Proton prefix) needs an explicit
+   `--confirm-live`, because Steam Cloud would propagate the edit to every
+   machine on the account. Scratch copies marked with `.nmsedit-sandbox` are
+   exempt.
 
 Details and measurements: [`docs/findings-m0.md`](docs/findings-m0.md),
 [`docs/findings-m2.md`](docs/findings-m2.md),

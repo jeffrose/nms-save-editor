@@ -57,6 +57,17 @@ prepare() {
   account="$(account_name)"
   local save_dir="$SAVE_ROOT/$account"
 
+  # Declare the tree a scratch copy: the edit layer refuses to write into a live
+  # save folder unless it is explicitly confirmed, and this marker is the
+  # standing confirmation for the sandbox.
+  mkdir -p "$SANDBOX"
+  printf 'scratch copy\n' > "$SANDBOX/.nmsedit-sandbox"
+
+  # Defence in depth: a sandbox must never be the real Proton prefix.
+  case "$SAVE_ROOT" in
+    *steamapps/compatdata/*) die "refusing to use a Steam-managed prefix as a sandbox: $SAVE_ROOT" ;;
+  esac
+
   # The pristine copy is the reference for every later comparison.
   mkdir -p "$PRISTINE"
   if [ -z "$(ls -A "$PRISTINE")" ]; then

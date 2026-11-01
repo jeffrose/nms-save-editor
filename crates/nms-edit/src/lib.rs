@@ -16,8 +16,10 @@
 
 pub mod backup;
 pub mod bundle;
+pub mod safety;
 
 pub use backup::{BackupEntry, BackupError, BackupStore, format_timestamp};
+pub use safety::{LiveLocation, LiveWrite, SANDBOX_MARKER, check_write, is_sandboxed, live_save_location, mark_sandbox};
 pub use bundle::{
     ChangeSummary, CommitOptions, CommitReport, MetadataPlan, SaveBundle, WritePlan, now_unix,
 };
@@ -54,6 +56,14 @@ pub enum EditError {
     /// Backups.
     #[error(transparent)]
     Backup(Box<BackupError>),
+
+    /// A write was aimed at a live, cloud-synced save location without
+    /// confirmation.
+    #[error("refusing to write to {path}: this looks like {kind}\n{hint}",
+        path = .0.path.display(),
+        kind = .0.kind.describe(),
+        hint = .0.hint())]
+    LiveSave(LiveWrite),
 
     /// Filesystem failure.
     #[error("{context}: {source}")]

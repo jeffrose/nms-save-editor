@@ -141,6 +141,7 @@ fn unmodified_save_commits_nothing() {
         keep_backups: 3,
         timestamp: Some(1_793_416_365),
         dry_run: false,
+        confirm_live: false,
     };
     let report = bundle.commit(&options).unwrap();
 
@@ -181,6 +182,9 @@ fn rename_updates_json_and_metadata_and_backs_up() {
         keep_backups: 3,
         timestamp: Some(1_793_488_365),
         dry_run: false,
+        // The fixtures live outside any save folder, but a test must never be
+        // able to write into one by accident either.
+        confirm_live: false,
     };
     let report = bundle.commit(&options).unwrap();
 
@@ -257,4 +261,45 @@ fn small_edit_only_changes_a_few_bytes() {
     );
 
     let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// A test must never be able to write into a live save folder by accident, and
+/// the guard must refuse one that is not a declared scratch copy.
+#[test]
+fn commit_refuses_a_live_save_folder() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures");
+        return;
+    };
+    let fake = std::env::temp_dir().join(format!("nms-edit-live-{}", std::process::id()));
+    let live = fake.join("compatdata/275850/pfx/drive_c/users/steamuser/AppData/Roaming/HelloGames/NMS/st_test");
+    std::fs::create_dir_all(&live).unwrap();
+    let slot = Slot::player_state(1);
+    std::fs::copy(dir.join(slot.data_file_name()), live.join(slot.data_file_name())).unwrap();
+    std::fs::copy(dir.join(slot.metadata_file_name()), live.join(slot.metadata_file_name())).unwrap();
+
+    let data_path = live.join(slot.data_file_name());
+    let before = std::fs::read(&data_path).unwrap();
+    let mut bundle = SaveBundle::load(&data_path, KeyMap::builtin()).unwrap();
+    bundle.set("CommonStateData.SaveName", Value::from("should not be written")).unwrap();
+
+    let refusal = bundle
+        .commit(&CommitOptions { timestamp: Some(1_793_488_365), ..Default::default() })
+        .unwrap_err();
+    let message = refusal.to_string();
+    assert!(message.contains("--confirm-live"), "{message}");
+    assert_eq!(std::fs::read(&data_path).unwrap(), before, "a refused commit must not touch the file");
+
+    // Declaring the tree a scratch copy lets the same commit through.
+    nms_edit::mark_sandbox(&fake).unwrap();
+    let report = bundle
+        .commit(&CommitOptions { timestamp: Some(1_793_488_365), ..Default::default() })
+        .unwrap();
+    assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
+    assert_eq!(
+        SaveBundle::load(&data_path, KeyMap::builtin()).unwrap().info().save_name.as_deref(),
+        Some("should not be written")
+    );
+
+    let _ = std::fs::remove_dir_all(&fake);
 }
