@@ -52,6 +52,11 @@ storage slot    2 (PlayerState1)
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
 | `nmsedit mapping <mapping.json>` | load a community key mapping |
 
+There is also an in-game verification harness that runs the game against a
+throwaway Proton prefix, because on PC the saves live inside the Steam
+Cloud-synced prefix and a test save there propagates to every machine on the
+account: `tools/sandbox-test.sh` (see [`docs/verification.md`](docs/verification.md)).
+
 Editing works on readable, dotted paths that are resolved through the key map,
 so what you type is the field name and what lands on disk is the spelling the
 game reads:
