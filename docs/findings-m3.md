@@ -51,12 +51,29 @@ matches its text. The entry table and the blob are separate regions, so agreemen
 between them is evidence rather than coincidence — a wrong stride or count cannot
 satisfy both.
 
-## Blocked on (next)
+## Item names: a join, not a lookup
 
-* **Item names.** They are not in the language tables. The save holds ids and the
-  display names live in `metadata/reality/tables/nms_reality_gc*table.mbin`
-  (~87 tables in `NMSARC.Precache.pak`), which are structured MBIN records and
-  need a field-level MBIN reader rather than a string-table reader.
+The save stores ids (`^CARBON_SEAL`, `^FUEL2`, `^MAINT_REFINER`) and the text
+tables do not name them. Names come from joining the item table's key with the
+text table:
+
+* the product table is a **768-byte grid** (id at +0xC0, name key at +0x160), and
+  walking it yields 2,261 records whose keys resolve 96% of the time — that rate
+  is the self-check;
+* the key **cannot be derived** from the id: `ANTIMATTER` is named by
+  `COMMODITY6_NAME`, `BIOSHIP_COMP5_0` by `UI_BIOSHIP_COMP5_NAME0`, and `FUEL2`
+  by `UI_FUEL_2_NAME`;
+* several id namespaces coexist — the save's `OXYGEN` is the table's `AIR1`.
+
+Of the 1,108 distinct item ids in a real save, **866 (78%) now produce text**,
+each labelled with its source (table join 282, derived key 80, custom name 425,
+placeholder 66, direct key 2). Nothing is guessed: unresolved ids are reported as
+such.
+
+## Still open
+
+* **Substance and technology tables** — different layouts (technology stride 736,
+  name key at id+0xBB) to close the remaining ~240 ids.
 * **Metadata archives reference a second data region.** 2,614 of 50,805 entries
   in `NMSARC.MetadataEtc.pak` point past the chunk region; reads of those fail
   with a clear error. Nothing in the data pack lives there.

@@ -31,6 +31,7 @@ DATA (regenerated from a local game installation):
     nmsedit data refresh                 read the game's archives and write a data pack
     nmsedit data info                    show the installed data pack
     nmsedit data lookup <id> [id...]     print game text by id
+    nmsedit data item <id> [id...]       print item names by id (^ and ! prefixes ok)
 
 PATH SYNTAX:
     Dotted, readable names; array indices in brackets.
@@ -687,6 +688,7 @@ fn cmd_data(args: &[String]) -> Result<(), String> {
         Some("refresh") => cmd_data_refresh(args),
         Some("info") => cmd_data_info(args),
         Some("lookup") => cmd_data_lookup(args),
+        Some("item") => cmd_data_item(args),
         Some(other) => Err(format!("unknown data command {other:?}\n\n{USAGE}")),
         None => Err(format!("missing data command (refresh, info, lookup)\n\n{USAGE}")),
     }
@@ -731,6 +733,15 @@ fn cmd_data_refresh(args: &[String]) -> Result<(), String> {
     pack.save(&out).map_err(|e| e.to_string())?;
     let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
     println!();
+    println!(
+        "items           {} named ({} from the item table, {} derived)",
+        pack.item_count(),
+        report.items.from_table,
+        report.items.derived
+    );
+    if report.items.unresolved > 0 {
+        println!("                {} table keys did not resolve", report.items.unresolved);
+    }
     println!("wrote {} strings ({language}) to {}", pack.len(), out.display());
     println!("pack size       {size} bytes");
     println!("nothing from the game is redistributed: the pack is built from your own install and stays here");
@@ -747,8 +758,32 @@ fn cmd_data_info(args: &[String]) -> Result<(), String> {
     println!("game version    {}", pack.game_version.as_deref().unwrap_or("(unknown)"));
     println!("generated       {} ({})", pack.generated_at, nms_edit::format_timestamp(pack.generated_at));
     println!("strings         {} ({} with text, {} empty)", pack.len(), filled, pack.len() - filled);
+    println!("items           {} named", pack.item_count());
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     println!("file size       {size} bytes");
+    Ok(())
+}
+
+fn cmd_data_item(args: &[String]) -> Result<(), String> {
+    let path = pack_path(args)?;
+    let pack = nms_data::DataPack::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let ids: Vec<&str> = positional(args).into_iter().skip(1).collect();
+    if ids.is_empty() {
+        return Err(format!("missing item id\n\n{USAGE}"));
+    }
+    let mut missing = 0usize;
+    for id in ids {
+        match pack.item_name_with_source(id) {
+            Some((name, source)) => println!("{id:<32} {name:<34} [{}]", source.label()),
+            None => {
+                println!("{id:<32} (no name found)");
+                missing += 1;
+            }
+        }
+    }
+    if missing > 0 {
+        return Err(format!("{missing} item(s) unresolved"));
+    }
     Ok(())
 }
 

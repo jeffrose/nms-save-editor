@@ -17,9 +17,9 @@ symptoms:
 
 * **native binaries** for Windows, Linux, macOS and Steam Deck — no JRE, no Wine;
 * **save integrity by construction** instead of by careful clicking;
-* **a data pipeline** that regenerates item names, recipes and key mappings from
-  the player's own game install, so a game update is a command, not a wait
-  (localisation works today: 84,965 strings in 137 ms);
+* **a data pipeline** that regenerates game text and item names from the
+  player's own install, so a game update is a command, not a wait (84,965 strings
+  and 7,640 item names in 137 ms today);
 * **automation** — a library and a CLI, not only a window.
 
 ## What works today
@@ -55,6 +55,7 @@ storage slot    2 (PlayerState1)
 | `nmsedit data refresh` | reread the game's archives and rebuild the local data pack |
 | `nmsedit data info` | show the installed data pack |
 | `nmsedit data lookup <id>` | print game text by id |
+| `nmsedit data item <id>` | print item names by id, with the source of each name |
 
 There is also an in-game verification harness that runs the game against a
 throwaway Proton prefix, because on PC the saves live inside the Steam
@@ -136,7 +137,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 |---|---|
 | **M1 (done)** | format layer, fidelity guarantees, verification CLI |
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
-| **M3 (in progress)** | game data pipeline — localisation regeneration works (84,965 strings in 137 ms); item tables need a field-level MBIN reader |
+| **M3 (in progress)** | game data pipeline — 84,965 strings regenerated in 137 ms, and item names joined from the product table (78% of a real save's ids named, sources labelled); substance/technology tables still to come |
 | M4 | editing: currencies, inventories, known items — library first, then GUI |
 | M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::install::Install;
+use crate::items::ItemIndex;
 use crate::{DataError, language};
 
 /// Pack format version. Bump when the layout changes incompatibly.
@@ -24,6 +25,8 @@ pub struct BuildReport {
     /// archive has no text in it, so failing to read one is not fatal: the pack
     /// is built from what could be read.
     pub skipped: Vec<String>,
+    /// How the item index was built.
+    pub items: crate::items::ItemIndexReport,
 }
 
 /// Per-archive parse result, for reporting.
@@ -54,6 +57,9 @@ pub struct DataPack {
     pub notes: String,
     /// `id -> text`, merged across every table read.
     pub strings: BTreeMap<String, String>,
+    /// `item id -> display name`, joined from the item tables and the text.
+    #[serde(default)]
+    pub items: BTreeMap<String, String>,
 }
 
 impl DataPack {
@@ -128,6 +134,12 @@ impl DataPack {
             return Err(DataError::NoTables { language: language_code.to_string() });
         }
 
+        // Item names: the product table's own keys, joined with the text, plus
+        // every `<id>_NAME` key for the ids other tables hold.
+        let product_table = read_item_table(install, "nms_reality_gcproducttable.mbin", &mut report);
+        let index = ItemIndex::build(product_table.as_deref().unwrap_or(&[]), &strings);
+        report.items = index.report.clone();
+
         let pack = DataPack {
             format: PACK_FORMAT,
             language: language_code.to_string(),
@@ -136,6 +148,7 @@ impl DataPack {
             notes: "Regenerated from a local No Man's Sky installation. No game text is distributed with this repository."
                 .to_string(),
             strings,
+            items: index.iter().map(|(id, text)| (id.clone(), text.clone())).collect(),
         };
         Ok((pack, report))
     }
@@ -153,6 +166,26 @@ impl DataPack {
     /// Look up a string by id.
     pub fn lookup(&self, id: &str) -> Option<&str> {
         self.strings.get(id).map(String::as_str)
+    }
+
+    /// Look up an item's display name by id, accepting the save's `^` and `!`
+    /// prefixes.
+    pub fn item_name(&self, id: &str) -> Option<String> {
+        self.item_name_with_source(id).map(|(text, _)| text)
+    }
+
+    /// Look up an item's display name together with where it came from.
+    pub fn item_name_with_source(&self, id: &str) -> Option<(String, crate::items::NameSource)> {
+        let bare = id.trim_start_matches(['^', '!']);
+        if let Some(text) = self.items.get(bare) {
+            return Some((text.clone(), crate::items::NameSource::Table));
+        }
+        crate::items::ItemIndex::default().resolve(id, &self.strings)
+    }
+
+    /// Number of named items.
+    pub fn item_count(&self) -> usize {
+        self.items.len()
     }
 
     /// Write the pack as JSON.
@@ -189,6 +222,28 @@ impl DataPack {
     }
 }
 
+/// Read one of the item tables out of the archives, if present.
+///
+/// A missing table is not fatal: the pack falls back to derived names.
+fn read_item_table(install: &Install, file_name: &str, report: &mut BuildReport) -> Option<Vec<u8>> {
+    let Ok(paks) = install.paks() else { return None };
+    for pak_path in paks {
+        let Ok(pak) = nms_pak::Pak::open(&pak_path) else { continue };
+        let Some(entry) = pak
+            .entries()
+            .iter()
+            .find(|entry| entry.name.ends_with(file_name))
+        else {
+            continue;
+        };
+        match pak.extract(entry) {
+            Ok(bytes) => return Some(bytes),
+            Err(error) => report.skipped.push(format!("{file_name}: {error}")),
+        }
+    }
+    None
+}
+
 /// Round-trip JSON through the same atomic replace used for saves.
 fn nms_editor_atomic_write(path: &Path, bytes: &[u8]) -> Result<(), DataError> {
     nms_format_write(path, bytes)
@@ -220,6 +275,7 @@ mod tests {
             generated_at: 1_793_488_365,
             notes: "test".into(),
             strings: BTreeMap::new(),
+            items: BTreeMap::new(),
         };
         pack.strings.insert("UI_VR_RECENTRE".into(), "Recentre VR View".into());
         pack.strings.insert("UI_EMPTY".into(), String::new());

@@ -24,10 +24,12 @@
 //! ```
 
 pub mod install;
+pub mod items;
 pub mod language;
 pub mod pack;
 
 pub use install::Install;
+pub use items::{ItemIndex, ItemIndexReport, NameSource};
 pub use language::Localisation;
 pub use pack::{BuildReport, DataPack, PACK_FORMAT, SourceReport};
 
