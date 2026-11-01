@@ -159,6 +159,112 @@ impl BackupStore {
     }
 }
 
+/// One file inside a backup archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivedFile {
+    /// Entry name inside the archive.
+    pub name: String,
+    /// Uncompressed size in bytes.
+    pub size: u64,
+}
+
+/// List the files inside a backup archive.
+pub fn list_archive(archive: &Path) -> Result<Vec<ArchivedFile>, BackupError> {
+    let file = std::fs::File::open(archive).map_err(|source| BackupError::Directory {
+        path: archive.display().to_string(),
+        source,
+    })?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|source| BackupError::Write {
+        path: archive.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    let mut files = Vec::new();
+    for index in 0..zip.len() {
+        let entry = zip.by_index(index).map_err(|source| BackupError::Write {
+            path: archive.display().to_string(),
+            message: source.to_string(),
+        })?;
+        // Only regular files, and never anything with a path component: a
+        // crafted archive must not be able to write outside the target.
+        let name = entry
+            .name()
+            .map_err(|source| BackupError::Write {
+                path: archive.display().to_string(),
+                message: source.to_string(),
+            })?
+            .to_string();
+        if entry.is_file() && !name.contains(['/', '\\']) && name != ".." {
+            files.push(ArchivedFile { name, size: entry.size() });
+        }
+    }
+    Ok(files)
+}
+
+/// Restore a backup archive into `destination`.
+///
+/// Files already present are first archived under `{label}_pre-restore`, so a
+/// restore is itself undoable. Returns the restored entry names.
+pub fn restore_archive(
+    archive: &Path,
+    destination: &Path,
+    store: &BackupStore,
+    timestamp: u64,
+) -> Result<Vec<String>, BackupError> {
+    let files = list_archive(archive)?;
+    if files.is_empty() {
+        return Err(BackupError::Write {
+            path: archive.display().to_string(),
+            message: "archive contains no files".to_string(),
+        });
+    }
+
+    std::fs::create_dir_all(destination).map_err(|source| BackupError::Directory {
+        path: destination.display().to_string(),
+        source,
+    })?;
+
+    // Preserve what is about to be replaced.
+    let existing: Vec<(String, PathBuf)> = files
+        .iter()
+        .map(|file| (file.name.clone(), destination.join(&file.name)))
+        .filter(|(_, path)| path.is_file())
+        .collect();
+    if !existing.is_empty() {
+        store.create("pre-restore", &existing, timestamp)?;
+    }
+
+    let file = std::fs::File::open(archive).map_err(|source| BackupError::Directory {
+        path: archive.display().to_string(),
+        source,
+    })?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|source| BackupError::Write {
+        path: archive.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    let mut restored = Vec::new();
+    for file in &files {
+        let mut entry = zip.by_name(&file.name).map_err(|source| BackupError::Write {
+            path: archive.display().to_string(),
+            message: source.to_string(),
+        })?;
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(|source| BackupError::Write {
+            path: archive.display().to_string(),
+            message: source.to_string(),
+        })?;
+        let target = destination.join(&file.name);
+        // Write through the same atomic path used for saves.
+        nms_format::write_atomic(&target, &bytes).map_err(|source| BackupError::Write {
+            path: target.display().to_string(),
+            message: source.to_string(),
+        })?;
+        restored.push(file.name.clone());
+    }
+    Ok(restored)
+}
+
 /// Format a Unix timestamp as `yyyyMMdd_HHmmss` in UTC.
 pub fn format_timestamp(seconds: u64) -> String {
     let days = (seconds / 86_400) as i64;
@@ -235,6 +341,20 @@ mod tests {
 
         // A label with no files produces no archive.
         assert!(store.create("empty", &[], 1).unwrap().is_none());
+
+        // Restore: list the archive, then put the files back, keeping a copy of
+        // what is replaced. A separate label keeps retention out of the way.
+        let source = store.create("restore-src", &files, 1_793_488_365).unwrap().unwrap();
+        let listed = list_archive(&source.path).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].name, "save.hg");
+        std::fs::write(&data, b"edited").unwrap();
+        let restored = restore_archive(&source.path, &saves, &store, 1_793_488_600).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(std::fs::read(&data).unwrap(), b"payload", "restore must bring the old contents back");
+        let pre = store.list("pre-restore").unwrap();
+        assert_eq!(pre.len(), 1, "the replaced file must be preserved: {pre:?}");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

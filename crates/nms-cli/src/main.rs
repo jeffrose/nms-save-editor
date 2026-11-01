@@ -20,6 +20,10 @@ USAGE:
     nmsedit dump <save.hg> [out]           write the raw on-disk payload
     nmsedit metadata <mf_*.hg>             decrypt and print a metadata file
     nmsedit backup <save-dir>              back up every save in a directory
+    nmsedit backups <save-dir>             list existing backups
+    nmsedit restore <backup.zip> --to <dir>
+                                           restore an archive (replaced files are
+                                           themselves backed up first)
     nmsedit verify <save-dir>              round-trip every file and report fidelity
     nmsedit mapping <mapping.json>         load a community key mapping and report it
 
@@ -38,6 +42,8 @@ OPTIONS:
     --raw                  export/dump the on-disk spelling instead of readable names
     --words                metadata: also print every non-zero word
     --mapping <file>       key mapping file to extend the built-in map
+                           (default: $NMSEDIT_MAPPING, then
+                           $XDG_CONFIG_HOME/nmsedit/mapping.json)
     -h, --help             show this help
 ";
 
@@ -56,6 +62,8 @@ fn main() -> ExitCode {
         Some("dump") => run(&args, cmd_dump),
         Some("metadata") => run(&args, cmd_metadata),
         Some("backup") => run(&args, cmd_backup),
+        Some("backups") => run(&args, cmd_backups),
+        Some("restore") => run(&args, cmd_restore),
         Some("verify") => run(&args, cmd_verify),
         Some("mapping") => run(&args, cmd_mapping),
         Some(other) => {
@@ -110,13 +118,32 @@ fn positional(args: &[String]) -> Vec<&str> {
     out
 }
 
+/// The mapping file used when `--mapping` is not given.
+///
+/// The full ~1300-entry mapping is game data that is regenerated per game
+/// version (see the data pipeline milestone), so it is not vendored into the
+/// binary. It is picked up from `$NMSEDIT_MAPPING`, then
+/// `$XDG_CONFIG_HOME/nmsedit/mapping.json` (default `~/.config/...`).
+fn default_mapping_path() -> Option<PathBuf> {
+    let base = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(value) if !value.is_empty() => PathBuf::from(value),
+        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
+    };
+    Some(base.join("nmsedit").join("mapping.json"))
+}
+
+/// Resolve the key map, reporting which sources were used.
 fn keys(args: &[String]) -> Result<KeyMap, String> {
-    match option(args, "--mapping") {
-        Some(path) => {
-            let loaded = KeyMap::load(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+    let path = option(args, "--mapping")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("NMSEDIT_MAPPING").ok().map(PathBuf::from).filter(|p| p.is_file()))
+        .or_else(default_mapping_path);
+    match path {
+        Some(path) if path.is_file() => {
+            let loaded = KeyMap::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             Ok(KeyMap::builtin().extended_with(&loaded))
         }
-        None => Ok(KeyMap::builtin()),
+        _ => Ok(KeyMap::builtin()),
     }
 }
 
@@ -163,6 +190,7 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
         );
     }
     println!("json keys       {}", doc.key_count());
+    println!("key map         {} entries{}", keys(args)?.len(), mapping_note(args));
     println!("version         {}", info.version.map(|v| v.to_string()).unwrap_or_else(|| "?".into()));
     println!("platform        {}", info.platform.as_deref().unwrap_or("?"));
     println!("active context  {}", info.active_context.as_deref().unwrap_or("?"));
@@ -364,9 +392,7 @@ fn cmd_backup(args: &[String]) -> Result<(), String> {
     let positional = positional(args);
     let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
     let keep = option(args, "--keep").and_then(|v| v.parse().ok()).unwrap_or(10);
-    let root = option(args, "--backup-dir").map(PathBuf::from).unwrap_or_else(|| dir.join("Save Backups"));
-
-    let store = nms_edit::BackupStore::new(root.clone(), keep);
+    let store = nms_edit::BackupStore::new(backup_root(args, &dir), keep);
     let mut files = Vec::new();
     for name in list_dir(&dir)? {
         if name.ends_with(".hg") {
@@ -385,6 +411,83 @@ fn cmd_backup(args: &[String]) -> Result<(), String> {
         }
         None => println!("nothing to back up"),
     }
+    Ok(())
+}
+
+/// Describe which mapping file, if any, was loaded.
+fn mapping_note(args: &[String]) -> String {
+    if let Some(path) = option(args, "--mapping") {
+        return format!(" ({path})");
+    }
+    if let Ok(value) = std::env::var("NMSEDIT_MAPPING") {
+        return format!(" ($NMSEDIT_MAPPING={value})");
+    }
+    match default_mapping_path() {
+        Some(path) if path.is_file() => format!(" ({})", path.display()),
+        Some(path) => format!(" (built-in only; install a full mapping at {})", path.display()),
+        None => " (built-in only)".to_string(),
+    }
+}
+
+fn backup_root(args: &[String], dir: &Path) -> PathBuf {
+    option(args, "--backup-dir").map(PathBuf::from).unwrap_or_else(|| dir.join("Save Backups"))
+}
+
+fn cmd_backups(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
+    let root = backup_root(args, &dir);
+    let store = nms_edit::BackupStore::new(root.clone(), 10);
+
+    let mut total = 0usize;
+    let mut labels: Vec<String> = Vec::new();
+    for name in list_dir(&root).unwrap_or_default() {
+        if let Some(label) = name.split('_').next() {
+            if !labels.contains(&label.to_string()) {
+                labels.push(label.to_string());
+            }
+        }
+    }
+    for label in labels {
+        let entries = store.list(&label).map_err(|e| e.to_string())?;
+        for entry in &entries {
+            println!(
+                "{:<28} {:>10} bytes  {}",
+                entry.path.file_name().unwrap_or_default().to_string_lossy(),
+                entry.size,
+                entry.path.display()
+            );
+        }
+        total += entries.len();
+    }
+    println!("{} backup(s) in {}", total, root.display());
+    Ok(())
+}
+
+fn cmd_restore(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let archive = PathBuf::from(positional.first().ok_or_else(|| format!("missing archive\n\n{USAGE}"))?);
+    let destination = option(args, "--to").map(PathBuf::from);
+
+    let files = nms_edit::backup::list_archive(&archive).map_err(|e| e.to_string())?;
+    let Some(destination) = destination else {
+        println!("{} contains {} file(s):", archive.display(), files.len());
+        for file in &files {
+            println!("  {:<16} {:>10} bytes", file.name, file.size);
+        }
+        println!("\npass --to <save-dir> to restore them (replaced files are backed up first)");
+        return Ok(());
+    };
+
+    let store_root = backup_root(args, &destination);
+    let store = nms_edit::BackupStore::new(store_root.clone(), 10);
+    let restored = nms_edit::backup::restore_archive(&archive, &destination, &store, now_unix())
+        .map_err(|e| e.to_string())?;
+    println!("restored {} file(s) into {}", restored.len(), destination.display());
+    for name in &restored {
+        println!("  {name}");
+    }
+    println!("previous contents archived in {}", store_root.display());
     Ok(())
 }
 

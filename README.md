@@ -47,6 +47,8 @@ storage slot    2 (PlayerState1)
 | `nmsedit dump <save.hg> [out]` | write the raw on-disk payload |
 | `nmsedit metadata <mf_*.hg>` | decrypt a metadata file and show every field |
 | `nmsedit backup <dir>` | timestamped zip backup of a save directory |
+| `nmsedit backups <dir>` | list existing backups |
+| `nmsedit restore <zip> --to <dir>` | restore a backup (replaced files are backed up first) |
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
 | `nmsedit mapping <mapping.json>` | load a community key mapping |
 
@@ -80,7 +82,8 @@ Verified against 62 real files from a live 7.x save set:
 5. **Metadata is only written with a new data file**, so it can never describe a
    file that did not change.
 6. **Every write is backed up first** (timestamped zip, bounded retention) and
-   **atomic** (temp file, flush, rename) — never a half-written save.
+   **atomic** (temp file, flush, rename) — never a half-written save. Restores
+   keep a copy of what they replace, so undoing an undo is possible too.
 7. **Changes are reported by field, not by byte count**
    (`CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha`).
 
@@ -116,7 +119,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | Milestone | Content |
 |---|---|
 | **M1 (done)** | format layer, fidelity guarantees, verification CLI |
-| **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export |
+| **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
 | M3 | game data pipeline: item database, localisation, key mapping generated from the game install |
 | M4 | editing: currencies, inventories, known items — library first, then GUI |
 | M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |
