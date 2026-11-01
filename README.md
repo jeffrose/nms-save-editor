@@ -18,7 +18,8 @@ symptoms:
 * **native binaries** for Windows, Linux, macOS and Steam Deck — no JRE, no Wine;
 * **save integrity by construction** instead of by careful clicking;
 * **a data pipeline** that regenerates item names, recipes and key mappings from
-  the player's own game install, so a game update is a command, not a wait;
+  the player's own game install, so a game update is a command, not a wait
+  (localisation works today: 84,965 strings in 137 ms);
 * **automation** — a library and a CLI, not only a window.
 
 ## What works today
@@ -51,6 +52,9 @@ storage slot    2 (PlayerState1)
 | `nmsedit restore <zip> --to <dir>` | restore a backup (replaced files are backed up first) |
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
 | `nmsedit mapping <mapping.json>` | load a community key mapping |
+| `nmsedit data refresh` | reread the game's archives and rebuild the local data pack |
+| `nmsedit data info` | show the installed data pack |
+| `nmsedit data lookup <id>` | print game text by id |
 
 There is also an in-game verification harness that runs the game against a
 throwaway Proton prefix, because on PC the saves live inside the Steam
@@ -108,6 +112,8 @@ Details and measurements: [`docs/findings-m0.md`](docs/findings-m0.md),
 crates/nms-format   LZ4 block containers, Latin-1 payloads, XXTEA metadata, atomic writes
 crates/nms-model    exact-text JSON documents, key mapping, path access, change reporting
 crates/nms-edit     load/edit/plan/commit, metadata mirroring, backups
+crates/nms-pak      HGPAK reader for the game's own .pak archives
+crates/nms-data     regenerates game text from a local installation
 crates/nms-cli      the nmsedit binary
 docs/format         the format notes this implementation is built from
 tools/              fixture and data-pipeline scripts
@@ -130,7 +136,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 |---|---|
 | **M1 (done)** | format layer, fidelity guarantees, verification CLI |
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
-| M3 | game data pipeline: item database, localisation, key mapping generated from the game install |
+| **M3 (in progress)** | game data pipeline — localisation regeneration works (84,965 strings in 137 ms); item tables need a field-level MBIN reader |
 | M4 | editing: currencies, inventories, known items — library first, then GUI |
 | M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |

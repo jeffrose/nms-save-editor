@@ -27,6 +27,11 @@ USAGE:
     nmsedit verify <save-dir>              round-trip every file and report fidelity
     nmsedit mapping <mapping.json>         load a community key mapping and report it
 
+DATA (regenerated from a local game installation):
+    nmsedit data refresh                 read the game's archives and write a data pack
+    nmsedit data info                    show the installed data pack
+    nmsedit data lookup <id> [id...]     print game text by id
+
 PATH SYNTAX:
     Dotted, readable names; array indices in brackets.
 
@@ -44,6 +49,9 @@ OPTIONS:
     --keep <n>             backups to keep per save (default 10)
     --raw                  export/dump the on-disk spelling instead of readable names
     --words                metadata: also print every non-zero word
+    --install <dir>        game installation (default: found via Steam)
+    --pack <file>          data pack file (default: ~/.config/nmsedit/strings.json)
+    --language <code>      language to read from the game (default: english)
     --mapping <file>       key mapping file to extend the built-in map
                            (default: $NMSEDIT_MAPPING, then
                            $XDG_CONFIG_HOME/nmsedit/mapping.json)
@@ -69,6 +77,7 @@ fn main() -> ExitCode {
         Some("restore") => run(&args, cmd_restore),
         Some("verify") => run(&args, cmd_verify),
         Some("mapping") => run(&args, cmd_mapping),
+        Some("data") => run(&args, cmd_data),
         Some(other) => {
             eprintln!("unknown command {other:?}\n\n{USAGE}");
             ExitCode::from(2)
@@ -670,6 +679,100 @@ fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
         Err(e) => row.container = format!("error: {e}"),
     }
     row
+}
+
+/// `nmsedit data ...`
+fn cmd_data(args: &[String]) -> Result<(), String> {
+    match positional(args).first().copied() {
+        Some("refresh") => cmd_data_refresh(args),
+        Some("info") => cmd_data_info(args),
+        Some("lookup") => cmd_data_lookup(args),
+        Some(other) => Err(format!("unknown data command {other:?}\n\n{USAGE}")),
+        None => Err(format!("missing data command (refresh, info, lookup)\n\n{USAGE}")),
+    }
+}
+
+fn pack_path(args: &[String]) -> Result<PathBuf, String> {
+    if let Some(path) = option(args, "--pack") {
+        return Ok(PathBuf::from(path));
+    }
+    if let Ok(value) = std::env::var("NMSEDIT_PACK") {
+        if !value.is_empty() {
+            return Ok(PathBuf::from(value));
+        }
+    }
+    nms_data::DataPack::default_path().ok_or_else(|| "cannot determine a home directory".to_string())
+}
+
+fn cmd_data_refresh(args: &[String]) -> Result<(), String> {
+    let install = nms_data::Install::discover(option(args, "--install").map(PathBuf::from).as_deref())
+        .map_err(|e| e.to_string())?;
+    let language = option(args, "--language").unwrap_or_else(|| "english".to_string());
+    let out = pack_path(args)?;
+
+    println!("installation    {}", install.root.display());
+    println!("archives        {}", install.pak_dir.display());
+    let (pack, report) = nms_data::DataPack::build(&install, &language, now_unix()).map_err(|e| e.to_string())?;
+
+    println!();
+    for source in &report.sources {
+        println!(
+            "  {:<28} {:>4} tables {:>8} entries  {}",
+            source.pak,
+            source.tables,
+            source.entries,
+            if source.exact { "exact" } else { "INEXACT" }
+        );
+    }
+    for skipped in &report.skipped {
+        println!("  skipped: {skipped}");
+    }
+
+    pack.save(&out).map_err(|e| e.to_string())?;
+    let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+    println!();
+    println!("wrote {} strings ({language}) to {}", pack.len(), out.display());
+    println!("pack size       {size} bytes");
+    println!("nothing from the game is redistributed: the pack is built from your own install and stays here");
+    Ok(())
+}
+
+fn cmd_data_info(args: &[String]) -> Result<(), String> {
+    let path = pack_path(args)?;
+    let pack = nms_data::DataPack::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let filled = pack.strings.values().filter(|text| !text.is_empty()).count();
+    println!("pack            {}", path.display());
+    println!("format          {}", pack.format);
+    println!("language        {}", pack.language);
+    println!("game version    {}", pack.game_version.as_deref().unwrap_or("(unknown)"));
+    println!("generated       {} ({})", pack.generated_at, nms_edit::format_timestamp(pack.generated_at));
+    println!("strings         {} ({} with text, {} empty)", pack.len(), filled, pack.len() - filled);
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    println!("file size       {size} bytes");
+    Ok(())
+}
+
+fn cmd_data_lookup(args: &[String]) -> Result<(), String> {
+    let path = pack_path(args)?;
+    let pack = nms_data::DataPack::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let ids: Vec<&str> = positional(args).into_iter().skip(1).collect();
+    if ids.is_empty() {
+        return Err(format!("missing id\n\n{USAGE}"));
+    }
+    let mut missing = 0usize;
+    for id in ids {
+        match pack.lookup(id) {
+            Some(text) => println!("{id:<32} {text}"),
+            None => {
+                println!("{id:<32} (not in the pack)");
+                missing += 1;
+            }
+        }
+    }
+    if missing > 0 {
+        return Err(format!("{missing} id(s) not found"));
+    }
+    Ok(())
 }
 
 fn cmd_mapping(args: &[String]) -> Result<(), String> {

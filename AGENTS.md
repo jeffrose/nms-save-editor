@@ -64,9 +64,14 @@ Any new write path needs a fixture test proving untouched data is byte-identical
 ## Conventions
 
 * Crates: `nms-format` (bytes), `nms-model` (documents, paths, change reports),
-  `nms-edit` (load/edit/plan/commit, metadata mirroring, backups), `nms-cli`,
-  `nms-gui` (later). Keep layers separate: no game knowledge in `nms-format`, no
-  byte handling in `nms-model`, no CLI concerns in `nms-edit`.
+  `nms-edit` (load/edit/plan/commit, metadata mirroring, backups), `nms-pak`
+  (the game's .pak container), `nms-data` (regenerating game text from an
+  installation), `nms-cli`, `nms-gui` (later). Keep layers separate: no game
+  knowledge in `nms-format`, no byte handling in `nms-model`, no CLI concerns in
+  `nms-edit`, and no game-text parsing in `nms-pak`.
+* Reading the game installation is fine and expected (it is how data packs are
+  built); writing to it never happens. Save folders are still off-limits — see
+  the section above.
 * Errors: `thiserror` enums per crate, no `anyhow` in libraries, no `unwrap` on
   file data. `panic!` is acceptable in tests.
 * Doc comments explain *why* a format detail exists (with the observation that

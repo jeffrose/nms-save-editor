@@ -12,6 +12,8 @@ authors = ["jeffrose"]
 
 [workspace.dependencies]
 nms-format = { path = "crates/nms-format" }
+nms-pak = { path = "crates/nms-pak" }
+nms-data = { path = "crates/nms-data" }
 nms-model = { path = "crates/nms-model" }
 nms-edit = { path = "crates/nms-edit" }
 lz4_flex = "0.11"

@@ -1,0 +1,12 @@
+[package]
+name = "nms-pak"
+description = "Reader for No Man's Sky HGPAK archives (the game's .pak data files)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ruzstd = "0.9"
+thiserror = "2"

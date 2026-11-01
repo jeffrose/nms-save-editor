@@ -144,10 +144,22 @@ dependencies = [
 name = "nms-cli"
 version = "0.1.0"
 dependencies = [
+ "nms-data",
  "nms-edit",
  "nms-format",
  "nms-model",
  "serde_json",
+]
+
+[[package]]
+name = "nms-data"
+version = "0.1.0"
+dependencies = [
+ "nms-format",
+ "nms-pak",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -180,6 +192,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nms-pak"
+version = "0.1.0"
+dependencies = [
+ "ruzstd",
+ "thiserror",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,6 +228,15 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "ruzstd"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
+dependencies = [
+ "twox-hash",
+]
 
 [[package]]
 name = "serde"

@@ -12,6 +12,7 @@ name = "nmsedit"
 path = "src/main.rs"
 
 [dependencies]
+nms-data.workspace = true
 nms-edit.workspace = true
 nms-format.workspace = true
 nms-model.workspace = true

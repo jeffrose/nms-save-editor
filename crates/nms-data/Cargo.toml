@@ -1,0 +1,15 @@
+[package]
+name = "nms-data"
+description = "Builds the editor's game-data pack from a player's own No Man's Sky installation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nms-format.workspace = true
+nms-pak.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
