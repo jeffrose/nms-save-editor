@@ -137,7 +137,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 |---|---|
 | **M1 (done)** | format layer, fidelity guarantees, verification CLI |
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
-| **M3 (in progress)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (93% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
+| **M3 (in progress)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
 | M4 | editing: currencies, inventories, known items — library first, then GUI |
 | M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |

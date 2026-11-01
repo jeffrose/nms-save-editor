@@ -422,14 +422,32 @@ impl ItemIndex {
         strings: &'a BTreeMap<String, String>,
     ) -> Option<(&'a str, NameSource)> {
         let bare = id.trim_start_matches(['^', '!']);
-        // The game separates a trailing number with an underscore in some keys:
-        // the substance `FUEL2` is named by `UI_FUEL_2_NAME`.
-        let digits = bare.trim_end_matches(|c: char| c.is_ascii_digit());
-        let number = &bare[digits.len()..];
+        // The game separates a trailing index with an underscore in some keys:
+        // the substance `FUEL2` is named by `UI_FUEL_2_NAME`, and the ship part
+        // `SAIL_BODYA` by `UI_SAIL_BODY_A_NAME`.
+        let without_digits = bare.trim_end_matches(|c: char| c.is_ascii_digit());
+        let mut splits: Vec<(&str, &str)> = Vec::new();
+        if without_digits.len() < bare.len() {
+            splits.push((without_digits, &bare[without_digits.len()..]));
+        } else {
+            // Part indices are one or two trailing letters (`SAIL_BODYA` is
+            // `UI_SAIL_BODY_A_NAME`); both lengths are offered as candidates.
+            for take in [2usize, 1] {
+                if bare.len() > take + 1 {
+                    let (stem, index) = bare.split_at(bare.len() - take);
+                    if index.chars().all(|c| c.is_ascii_uppercase()) {
+                        splits.push((stem, index));
+                    }
+                }
+            }
+        }
         let mut candidates = vec![format!("{bare}_NAME"), format!("UI_{bare}_NAME")];
-        if !number.is_empty() && !digits.is_empty() {
-            candidates.push(format!("{digits}_{number}_NAME"));
-            candidates.push(format!("UI_{digits}_{number}_NAME"));
+        for (stem, index) in splits {
+            let stem = stem.trim_end_matches('_');
+            if !stem.is_empty() {
+                candidates.push(format!("{stem}_{index}_NAME"));
+                candidates.push(format!("UI_{stem}_{index}_NAME"));
+            }
         }
         // Base parts are named `BLD_<stem>_NAME` for the id `BASE_<stem>`, save
         // beacons are `BUILDBEACON` for `BLD_BEACON_NAME`, and corvette modules
@@ -655,11 +673,19 @@ mod tests {
     }
 
     #[test]
-    fn finds_keys_that_separate_a_trailing_number() {
-        let text = strings(&[("UI_FUEL_2_NAME", "CONDENSED CARBON")]);
+    fn finds_keys_that_separate_a_trailing_index() {
+        // Numbers and single letters both get an underscore in the key.
+        let text = strings(&[
+            ("UI_FUEL_2_NAME", "CONDENSED CARBON"),
+            ("UI_SAIL_BODY_A_NAME", "RAVEN COCKPIT"),
+        ]);
         assert_eq!(
             ItemIndex::resolve_against("FUEL2", &text),
             Some(("CONDENSED CARBON", NameSource::Derived))
+        );
+        assert_eq!(
+            ItemIndex::resolve_against("SAIL_BODYA", &text),
+            Some(("RAVEN COCKPIT", NameSource::Derived))
         );
         assert_eq!(ItemIndex::resolve_against("FUEL", &text), None);
     }

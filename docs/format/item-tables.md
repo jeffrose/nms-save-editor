@@ -71,13 +71,13 @@ inventing them.
 ## What the editor shows today
 
 Given the 1,108 distinct item ids in a real save, `nmsedit data item` produces
-text for **1,038 of them (93%)**, and each answer says where it came from:
+text for **1,040 of them (94%)**, and each answer says where it came from:
 
 | Source | Count | Meaning |
 |---|---|---|
 | item table | 484 | a join from products, substances or technologies |
 | custom name | 426 | the id field holds a generated name, which *is* the display text |
-| derived key | 99 | one of the locate-rules above |
+| derived key | 101 | one of the locate-rules above |
 | placeholder | 19 | a damaged or empty slot with no name anywhere |
 
 Nothing is invented: an id that resolves to no text is reported as unresolved
@@ -115,7 +115,7 @@ with the evidence rather than guessed at:
 
 ## Next
 
-* **The remaining 80 ids** are corvette module variants with left/right and
+* **The remaining 78 ids** are corvette module variants with left/right and
   decorative markers (`B_CON_L_0`, `B_CON_R_3`, `B_DECO_N_1`, …), plus a handful
   of ship hull parts whose save ids are truncated (`SCIEN_COCKAB` for
   `UI_SCIENTIFIC_COCK_ABA_NAME`).

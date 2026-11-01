@@ -75,8 +75,8 @@ the key: `B_<x>` → `BLD_BIG_<x>_NAME` for corvette modules (with a size infix 
 the cockpit and wing families), `FIGHT_`/`SCIEN_` → `UI_FIGHTER_`/`UI_SCIENTIFIC_`
 for ship hull parts, `BUILD_` → plain strip, `SB_` → `BLD_`.
 
-Of the 1,108 distinct item ids in a real save, **1,038 (93%) now produce text**,
-each labelled with its source (item table 484, custom name 426, derived key 99,
+Of the 1,108 distinct item ids in a real save, **1,040 (94%) now produce text**,
+each labelled with its source (item table 484, custom name 426, derived key 101,
 placeholder 19). Nothing is guessed: unresolved ids are reported as such.
 
 **Categories are cross-checked against the save itself.** The pack labels every
