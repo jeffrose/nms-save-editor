@@ -8,5 +8,5 @@
 pub mod document;
 pub mod keymap;
 
-pub use document::{ByteDiff, Document, ModelError, SaveInfo};
+pub use document::{ByteDiff, Document, ModelError, PathError, SaveInfo, TreeChange, readable_tree, tree_diff};
 pub use keymap::KeyMap;

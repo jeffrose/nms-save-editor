@@ -87,6 +87,32 @@ pub enum FormatError {
         name: String,
     },
 
+    /// A mirrored metadata string does not fit its field.
+    #[error("metadata field {field} holds {len} bytes, the limit is {limit}")]
+    MetadataStringTooLong {
+        /// Field name (`SaveName`, `Location`, `GameMode`).
+        field: &'static str,
+        /// Length of the value that was offered.
+        len: usize,
+        /// Field capacity in bytes, including the terminating NUL.
+        limit: usize,
+    },
+
+    /// Extending a mirrored metadata string would overwrite unknown data.
+    ///
+    /// The field is left untouched rather than clobbering words that hold
+    /// something other than the current string; the caller decides whether to
+    /// surface that as a warning.
+    #[error("metadata field {field} would overwrite non-empty word {word} at index {index}")]
+    MetadataFieldOccupied {
+        /// Field name.
+        field: &'static str,
+        /// Word index that is not empty.
+        index: usize,
+        /// Contents of that word.
+        word: u32,
+    },
+
     /// I/O failure.
     #[error("{context}: {source}")]
     Io {

@@ -12,6 +12,7 @@ name = "nmsedit"
 path = "src/main.rs"
 
 [dependencies]
+nms-edit.workspace = true
 nms-format.workspace = true
 nms-model.workspace = true
 serde_json.workspace = true

@@ -31,16 +31,20 @@ edited.** Concretely:
   dirty.
 * Numbers are parsed with `arbitrary_precision` and never reformatted; keys are
   never re-spelled; payloads are Latin-1 at the byte boundary.
-* Metadata is **patched**, never regenerated — unknown words are copied.
+* Metadata is **patched**, never regenerated — unknown words are copied, and it
+  is only written when the data file itself was rewritten.
+* A mirror string may only extend into words that are currently zero; if it
+  cannot be written safely the field is dropped with a warning, never forced.
 
 If a change would relax any of these, stop and raise it with the user first.
 Any new write path needs a fixture test proving untouched data is byte-identical.
 
 ## Conventions
 
-* Crates: `nms-format` (bytes), `nms-model` (documents), `nms-edit` (domain
-  operations, later), `nms-cli`, `nms-gui` (later). Keep layers separate: no
-  game knowledge in `nms-format`, no byte handling in `nms-model`.
+* Crates: `nms-format` (bytes), `nms-model` (documents, paths, change reports),
+  `nms-edit` (load/edit/plan/commit, metadata mirroring, backups), `nms-cli`,
+  `nms-gui` (later). Keep layers separate: no game knowledge in `nms-format`, no
+  byte handling in `nms-model`, no CLI concerns in `nms-edit`.
 * Errors: `thiserror` enums per crate, no `anyhow` in libraries, no `unwrap` on
   file data. `panic!` is acceptable in tests.
 * Doc comments explain *why* a format detail exists (with the observation that

@@ -1,0 +1,18 @@
+[package]
+name = "nms-edit"
+description = "Save editing operations for No Man's Sky: load a save with its metadata, plan changes, back up and commit them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nms-format.workspace = true
+nms-model.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+zip.workspace = true

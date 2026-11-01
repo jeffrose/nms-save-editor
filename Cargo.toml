@@ -13,10 +13,12 @@ authors = ["jeffrose"]
 [workspace.dependencies]
 nms-format = { path = "crates/nms-format" }
 nms-model = { path = "crates/nms-model" }
+nms-edit = { path = "crates/nms-edit" }
 lz4_flex = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 thiserror = "2"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [profile.release]
 lto = "thin"

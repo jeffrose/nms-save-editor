@@ -41,25 +41,39 @@ expected slot is wrong.
 | 18 | flag | `1` in every observed file |
 | 19–20 | play time, seconds | low/high word; equals JSON `TotalPlayTime` |
 | 21 | decompressed size (again) | duplicates word 14 |
-| 22..29 | save name, UTF-8, NUL padded | `Utopia`, `Our Journey Continues`; empty for unnamed saves |
-| 54..61 | location summary, UTF-8, NUL padded | `Aboard Laracu XVII Station Beta`, `In the Fasyrini system`; equals JSON `PlayerStateData.SaveSummary` |
+| 22.. | save name, UTF-8, NUL padded | `Utopia`, `Our Journey Continues`; empty for unnamed saves |
+| 54.. | location summary, UTF-8, NUL padded | `Aboard Laracu XVII Station Beta`, `In the Fasyrini system`; equals JSON `PlayerStateData.SaveSummary` |
 | 89 | timestamp | unix seconds; matches the data file's mtime (within a second or two) |
-| 91..92 | game mode, UTF-8, NUL padded | `Normal`; matches JSON `DifficultyState.*.DifficultyPresetType` |
+| 91.. | game mode, UTF-8, NUL padded | `Normal`; matches JSON `DifficultyState.*.DifficultyPresetType` |
 
-Words not listed are zero in every observed file.
+Words not listed are zero in every observed file. Text fields start where shown
+and end at their NUL: the longest name seen is 23 bytes and the longest location
+34 bytes, so the declared capacities (32 / 40 / 16 bytes) are the observed
+extents rounded up, and writing treats them as a ceiling rather than a fact.
 
 ## What a writer must do
 
-Sizes and the version word are derivable, so a correct write refreshes at least:
-words 14, 15, 17, 19, 20 and 21. Words 22–29, 54–61 and 91–92 mirror editable
-JSON fields (`SaveName`, `SaveSummary`, difficulty preset), so a save that
-changes those must refresh them too or the slot list goes stale — that is the
-reported "metadata size and cloud sync state differ from what the game syncs"
-failure mode. Word 89 tracks the file timestamp.
+Every field in the table above is derived from the save and rewritten on commit:
+sizes, version, play time, save name, location, game mode and timestamp. Leaving
+any of them stale is the reported "metadata size and cloud sync state differ
+from what the game syncs" failure mode — the game draws its slot list from this
+file, not from the save.
 
-The current implementation patches words 14, 15, 17, 19 and 20 and preserves
-everything else byte-for-byte. Deriving the mirrored strings is the next
-metadata milestone and is listed in the README roadmap.
+Rules the implementation follows:
+
+* **Mirror, never regenerate.** Unknown words (2..9, 86..88, everything not in
+  the table) are copied verbatim because the cipher is deterministic.
+* **Metadata is only written alongside a new data file.** An unedited save is
+  left completely alone, metadata included.
+* **A string may only extend into empty words.** Overwriting a word that holds
+  something other than the current string aborts that field, which is then
+  reported as a warning instead of blocking the commit.
+* **Sizes describe the file that was actually written**, including the
+  re-encoded container size.
+
+`PlayerStateData` is reached through a context — `BaseContext` for normal saves,
+`ExpeditionContext` for expedition saves — so the mirror reads the first of
+those two paths that resolves.
 
 ## Unknowns
 

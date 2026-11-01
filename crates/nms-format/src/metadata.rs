@@ -172,7 +172,7 @@ impl std::fmt::Display for Slot {
 }
 
 /// Fields a writer may update. `None` leaves the existing value untouched.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MetadataPatch {
     /// Decompressed payload size in bytes, including the trailing NUL.
     pub decompressed_size: Option<u32>,
@@ -182,6 +182,104 @@ pub struct MetadataPatch {
     pub version: Option<u32>,
     /// Total play time in seconds.
     pub play_time: Option<u64>,
+    /// Player-chosen save name, mirrored from the save JSON.
+    pub save_name: Option<String>,
+    /// Location summary, mirrored from the save JSON.
+    pub location: Option<String>,
+    /// Game mode, mirrored from the save JSON.
+    pub game_mode: Option<String>,
+    /// Unix timestamp; the game stores the data file's modification time.
+    pub timestamp: Option<u32>,
+}
+
+/// A NUL-terminated text field inside a metadata file.
+///
+/// Boundaries are the observed extents: `SaveName` and `Location` were seen
+/// spanning 24 and 36 bytes respectively, `GameMode` 8. The declared capacity is
+/// slightly larger, and a write refuses to extend a string into a word that is
+/// not empty, so an inaccurate guess can never clobber unknown data — it only
+/// makes the writer more conservative about long values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StringField {
+    /// Index of the first word of the field.
+    pub start_word: usize,
+    /// Field capacity in bytes, including the terminating NUL.
+    pub max_bytes: usize,
+    /// Name used in error messages.
+    pub name: &'static str,
+}
+
+impl StringField {
+    /// Player-chosen save name (JSON `CommonStateData.SaveName`).
+    pub const SAVE_NAME: StringField = StringField { start_word: 22, max_bytes: 32, name: "SaveName" };
+    /// Location summary (JSON `PlayerStateData.SaveSummary`).
+    pub const LOCATION: StringField = StringField { start_word: 54, max_bytes: 40, name: "Location" };
+    /// Game mode (JSON `DifficultyState.*.DifficultyPresetType`).
+    pub const GAME_MODE: StringField = StringField { start_word: 91, max_bytes: 16, name: "GameMode" };
+
+    /// Words the field occupies.
+    fn word_count(&self) -> usize {
+        self.max_bytes / 4
+    }
+}
+
+/// Read a NUL-terminated text field from decrypted words.
+pub fn read_string_field(words: &[u32], field: StringField) -> String {
+    let mut bytes = Vec::new();
+    for index in field.start_word..(field.start_word + field.word_count()).min(words.len()) {
+        for byte in words[index].to_le_bytes() {
+            if byte == 0 {
+                return String::from_utf8_lossy(&bytes).into_owned();
+            }
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Write a NUL-terminated text field, refusing to overwrite unknown data.
+///
+/// Words that the *current* string does not occupy are only written when they
+/// are zero, so extending a string into free space is allowed while extending
+/// it into a word that holds something else fails with
+/// [`FormatError::MetadataFieldOccupied`].
+pub fn write_string_field(words: &mut [u32], field: StringField, value: &str) -> Result<(), FormatError> {
+    let bytes = value.as_bytes();
+    if bytes.len() + 1 > field.max_bytes {
+        return Err(FormatError::MetadataStringTooLong {
+            field: field.name,
+            len: bytes.len(),
+            limit: field.max_bytes,
+        });
+    }
+
+    let current = read_string_field(words, field);
+    let current_padded_words = if current.is_empty() { 0 } else { (current.len() + 1).div_ceil(4) };
+    let needed_words = (bytes.len() + 1).div_ceil(4);
+    let write_words = current_padded_words.max(needed_words);
+
+    // Only the region beyond the current string is "new" territory: it must be
+    // empty before we touch it.
+    for offset in current_padded_words..write_words {
+        let index = field.start_word + offset;
+        if words[index] != 0 {
+            return Err(FormatError::MetadataFieldOccupied {
+                field: field.name,
+                index,
+                word: words[index],
+            });
+        }
+    }
+
+    let mut padded = vec![0u8; field.max_bytes];
+    padded[..bytes.len()].copy_from_slice(bytes);
+    for (offset, chunk) in padded.chunks_exact(4).enumerate() {
+        let index = field.start_word + offset;
+        if offset < write_words {
+            words[index] = u32::from_le_bytes(chunk.try_into().unwrap());
+        }
+    }
+    Ok(())
 }
 
 /// Decrypted metadata for one storage slot.
@@ -206,6 +304,21 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    /// Player-chosen save name as stored in the metadata file.
+    pub fn save_name(&self) -> String {
+        read_string_field(&self.words, StringField::SAVE_NAME)
+    }
+
+    /// Location summary as stored in the metadata file.
+    pub fn location(&self) -> String {
+        read_string_field(&self.words, StringField::LOCATION)
+    }
+
+    /// Game mode as stored in the metadata file.
+    pub fn game_mode(&self) -> String {
+        read_string_field(&self.words, StringField::GAME_MODE)
+    }
+
     /// Read and decrypt metadata bytes, trying `expected` first and then other
     /// slots of the same kind (account or player).
     pub fn read(bytes: &[u8], expected: Slot) -> Result<Metadata, FormatError> {
@@ -267,6 +380,18 @@ impl Metadata {
             words[19] = v as u32;
             words[20] = (v >> 32) as u32;
         }
+        if let Some(v) = patch.timestamp {
+            words[89] = v;
+        }
+        if let Some(v) = &patch.save_name {
+            write_string_field(&mut words, StringField::SAVE_NAME, v)?;
+        }
+        if let Some(v) = &patch.location {
+            write_string_field(&mut words, StringField::LOCATION, v)?;
+        }
+        if let Some(v) = &patch.game_mode {
+            write_string_field(&mut words, StringField::GAME_MODE, v)?;
+        }
 
         let key = xxtea::derive_key(self.slot);
         xxtea::encrypt(&mut words, &key, rounds);
@@ -292,7 +417,7 @@ mod tests {
         words[15] = 5678;
         words[17] = 4231;
         words[19] = 3156876;
-        words[23] = 0xDEAD_BEEF; // an unknown field that must survive patching
+        words[100] = 0xDEAD_BEEF; // free space: must survive patching
         let key = xxtea::derive_key(slot);
         xxtea::encrypt(&mut words, &key, rounds);
         xxtea::words_to_bytes(&words)
@@ -323,6 +448,7 @@ mod tests {
                 compressed_size: Some(42),
                 version: Some(4200),
                 play_time: Some(7_000_000),
+                ..Default::default()
             })
             .unwrap();
         let after = Metadata::read(&patched, slot).unwrap();
@@ -330,7 +456,91 @@ mod tests {
         assert_eq!(after.compressed_size, 42);
         assert_eq!(after.version, 4200);
         assert_eq!(after.play_time, 7_000_000);
-        assert_eq!(after.words[23], 0xDEAD_BEEF, "unknown fields must be preserved");
+        assert_eq!(after.words[100], 0xDEAD_BEEF, "unknown fields must be preserved");
+    }
+
+    #[test]
+    fn mirrors_summary_strings_and_timestamp() {
+        let slot = Slot::player_state(4);
+        let bytes = synthetic_metadata(slot, 432);
+        let meta = Metadata::read(&bytes, slot).unwrap();
+        assert_eq!(meta.save_name(), "", "synthetic metadata starts with empty strings");
+
+        let patched = meta
+            .patch_to_bytes(&MetadataPatch {
+                save_name: Some("Utopia".into()),
+                location: Some("Aboard Dalaking Exchange".into()),
+                game_mode: Some("Normal".into()),
+                timestamp: Some(1_793_416_365),
+                ..Default::default()
+            })
+            .unwrap();
+        let after = Metadata::read(&patched, slot).unwrap();
+        assert_eq!(after.save_name(), "Utopia");
+        assert_eq!(after.location(), "Aboard Dalaking Exchange");
+        assert_eq!(after.game_mode(), "Normal");
+        assert_eq!(after.words[89], 1_793_416_365);
+        // Untouched words survive.
+        assert_eq!(after.words[100], 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn shortening_a_string_clears_the_tail() {
+        let slot = Slot::player_state(4);
+        let meta = Metadata::read(&synthetic_metadata(slot, 432), slot).unwrap();
+        let long = meta
+            .patch_to_bytes(&MetadataPatch { save_name: Some("Our Journey Continues".into()), ..Default::default() })
+            .unwrap();
+        let mixed = Metadata::read(&long, slot).unwrap();
+        assert_eq!(mixed.save_name(), "Our Journey Continues");
+
+        let short = mixed
+            .patch_to_bytes(&MetadataPatch { save_name: Some("Short".into()), ..Default::default() })
+            .unwrap();
+        let after = Metadata::read(&short, slot).unwrap();
+        assert_eq!(after.save_name(), "Short", "the previous, longer name must not leak through");
+        let field_words = &after.words[StringField::SAVE_NAME.start_word..StringField::SAVE_NAME.start_word + 8];
+        assert!(
+            field_words[2..].iter().all(|word| *word == 0),
+            "words beyond the new value must be cleared, got {field_words:?}"
+        );
+    }
+
+    #[test]
+    fn refuses_overlong_strings() {
+        let slot = Slot::player_state(4);
+        let meta = Metadata::read(&synthetic_metadata(slot, 432), slot).unwrap();
+        let too_long = "x".repeat(StringField::SAVE_NAME.max_bytes);
+        let err = meta
+            .patch_to_bytes(&MetadataPatch { save_name: Some(too_long), ..Default::default() })
+            .unwrap_err();
+        assert!(matches!(err, FormatError::MetadataStringTooLong { field: "SaveName", .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn refuses_to_extend_a_string_into_occupied_words() {
+        let slot = Slot::player_state(4);
+        // Words 22.. are the SaveName field; word 23 holds something unknown.
+        let mut words: Vec<u32> = vec![0; 108];
+        words[0] = METADATA_MAGIC;
+        words[1] = 0x7D4;
+        words[23] = 0xCAFE_0000;
+        // Pad into ciphertext form via a rebuild that keeps those words.
+        let mut cipher = words.clone();
+        let key = xxtea::derive_key(slot);
+        xxtea::encrypt(&mut cipher, &key, 6);
+        let raw = xxtea::words_to_bytes(&cipher);
+        let meta = Metadata::read(&raw, slot).unwrap();
+
+        // A short name only writes word 22, so it stays inside free space...
+        let small = meta.patch_to_bytes(&MetadataPatch { save_name: Some("Ab".into()), ..Default::default() });
+        assert!(small.is_ok(), "a value that fits before the occupied word must succeed");
+
+        // ...but one that needs word 23 must refuse.
+        let err = meta
+            .patch_to_bytes(&MetadataPatch { save_name: Some("Longer name".into()), ..Default::default() })
+            .unwrap_err();
+        assert!(matches!(err, FormatError::MetadataFieldOccupied { field: "SaveName", index: 23, .. }), "got {err:?}");
     }
 
     #[test]

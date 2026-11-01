@@ -40,11 +40,28 @@ storage slot    2 (PlayerState1)
 | Command | Purpose |
 |---|---|
 | `nmsedit info <save.hg>` | container layout plus a summary of the save |
-| `nmsedit metadata <mf_*.hg>` | decrypt a metadata file and show every field |
 | `nmsedit slots <dir>` | list every slot with platform, version, play time, name |
-| `nmsedit dump <save.hg> [out]` | write the raw JSON payload |
+| `nmsedit get <save.hg> <path>` | read a field by readable path |
+| `nmsedit set <save.hg> <path> <value>` | edit a field: back up, write, refresh metadata |
+| `nmsedit export <save.hg\|dir> [out]` | readable JSON for review, sharing or diffing |
+| `nmsedit dump <save.hg> [out]` | write the raw on-disk payload |
+| `nmsedit metadata <mf_*.hg>` | decrypt a metadata file and show every field |
+| `nmsedit backup <dir>` | timestamped zip backup of a save directory |
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
 | `nmsedit mapping <mapping.json>` | load a community key mapping |
+
+Editing works on readable, dotted paths that are resolved through the key map,
+so what you type is the field name and what lands on disk is the spelling the
+game reads:
+
+```console
+$ nmsedit set save.hg CommonStateData.SaveName "Voyager Alpha"
+save.hg (PlayerState13)
+  CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha
+CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha (payload 8825445 -> 8825437 bytes; 9 metadata words refreshed)
+backup: Save Backups/save13_20261101_011825.zip (1926925 bytes)
+wrote: 2605205 bytes (metadata: 432 bytes)
+```
 
 ## Guarantees
 
@@ -56,12 +73,19 @@ Verified against 62 real files from a live 7.x save set:
    rewrites ~6% of the numeric literals in a real save; this does not.
 3. **Latin-1 payloads survive.** Non-UTF-8 bytes in names are preserved, and
    characters above `U+00FF` are written as escapes rather than dropped.
-4. **Metadata is patched, not regenerated.** Unknown fields are copied verbatim
-   and the cipher is deterministic, so unchanged metadata re-encrypts to the
-   original bytes.
-5. **Writes are atomic.** Temp file, flush, rename — never a half-written save.
+4. **Metadata is mirrored, not regenerated.** Sizes, version, play time, save
+   name, location, game mode and timestamp are re-derived from the save (verified
+   to match the game's own metadata across all 30 fixture slots), and unknown
+   words are copied verbatim.
+5. **Metadata is only written with a new data file**, so it can never describe a
+   file that did not change.
+6. **Every write is backed up first** (timestamped zip, bounded retention) and
+   **atomic** (temp file, flush, rename) — never a half-written save.
+7. **Changes are reported by field, not by byte count**
+   (`CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha`).
 
 Details and measurements: [`docs/findings-m0.md`](docs/findings-m0.md),
+[`docs/findings-m2.md`](docs/findings-m2.md),
 [`docs/format/save-file.md`](docs/format/save-file.md),
 [`docs/format/metadata.md`](docs/format/metadata.md).
 
@@ -69,7 +93,8 @@ Details and measurements: [`docs/findings-m0.md`](docs/findings-m0.md),
 
 ```
 crates/nms-format   LZ4 block containers, Latin-1 payloads, XXTEA metadata, atomic writes
-crates/nms-model    exact-text JSON documents, key mapping, payload diffing
+crates/nms-model    exact-text JSON documents, key mapping, path access, change reporting
+crates/nms-edit     load/edit/plan/commit, metadata mirroring, backups
 crates/nms-cli      the nmsedit binary
 docs/format         the format notes this implementation is built from
 tools/              fixture and data-pipeline scripts
@@ -91,7 +116,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | Milestone | Content |
 |---|---|
 | **M1 (done)** | format layer, fidelity guarantees, verification CLI |
-| M2 | metadata refresh (save name, location, mode, timestamp), backups, diff report, `nmsedit export` |
+| **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export |
 | M3 | game data pipeline: item database, localisation, key mapping generated from the game install |
 | M4 | editing: currencies, inventories, known items — library first, then GUI |
 | M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |

@@ -1,12 +1,10 @@
-//! `nmsedit` — inspect, verify, and (soon) edit No Man's Sky save files.
-//!
-//! This first milestone is deliberately read-only plus verification: every
-//! command below proves something about the on-disk data without changing it.
+//! `nmsedit` — inspect, verify and edit No Man's Sky save files.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use nms_format::metadata::{Metadata, Slot};
+use nms_edit::{CommitOptions, SaveBundle, now_unix};
+use nms_format::metadata::{Metadata, MetadataPatch, Slot};
 use nms_format::SaveFile;
 use nms_model::{Document, KeyMap};
 
@@ -14,15 +12,33 @@ const USAGE: &str = "\
 nmsedit — No Man's Sky save tool
 
 USAGE:
-    nmsedit info <save.hg>          summarise a save file and its JSON payload
-    nmsedit dump <save.hg> [out]    write the decompressed payload (default: stdout)
-    nmsedit metadata <mf_*.hg>      decrypt and print a metadata file
-    nmsedit slots <save-dir>        list every slot in a save directory
-    nmsedit verify <save-dir>       round-trip every file and report fidelity
-    nmsedit mapping <mapping.json>  load a community key mapping and report it
+    nmsedit info <save.hg>                 summarise a save file and its JSON payload
+    nmsedit slots <save-dir>               list every slot in a save directory
+    nmsedit get <save.hg> <path>           read a field by readable path
+    nmsedit set <save.hg> <path> <value>   edit a field, back up, and refresh metadata
+    nmsedit export <save.hg|dir> [out]     write readable JSON (mapping applied)
+    nmsedit dump <save.hg> [out]           write the raw on-disk payload
+    nmsedit metadata <mf_*.hg>             decrypt and print a metadata file
+    nmsedit backup <save-dir>              back up every save in a directory
+    nmsedit verify <save-dir>              round-trip every file and report fidelity
+    nmsedit mapping <mapping.json>         load a community key mapping and report it
+
+PATH SYNTAX:
+    Dotted, readable names; array indices in brackets.
+
+        CommonStateData.SaveName
+        PlayerStateData.SaveSummary
+        PlayerStateData.DifficultyState.Preset.DifficultyPresetType
+        PlayerStateData.Inventory[3].b2n
 
 OPTIONS:
-    -h, --help                      show this help
+    --dry-run              plan an edit without writing anything
+    --backup-dir <dir>     where to write the timestamped zip backup
+    --keep <n>             backups to keep per save (default 10)
+    --raw                  export/dump the on-disk spelling instead of readable names
+    --words                metadata: also print every non-zero word
+    --mapping <file>       key mapping file to extend the built-in map
+    -h, --help             show this help
 ";
 
 fn main() -> ExitCode {
@@ -33,9 +49,13 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("info") => run(&args, cmd_info),
+        Some("slots") => run(&args, cmd_slots),
+        Some("get") => run(&args, cmd_get),
+        Some("set") => run(&args, cmd_set),
+        Some("export") => run(&args, cmd_export),
         Some("dump") => run(&args, cmd_dump),
         Some("metadata") => run(&args, cmd_metadata),
-        Some("slots") => run(&args, cmd_slots),
+        Some("backup") => run(&args, cmd_backup),
         Some("verify") => run(&args, cmd_verify),
         Some("mapping") => run(&args, cmd_mapping),
         Some(other) => {
@@ -55,29 +75,92 @@ fn run(args: &[String], command: fn(&[String]) -> Result<(), String>) -> ExitCod
     }
 }
 
-fn require_path(args: &[String], index: usize) -> Result<PathBuf, String> {
-    args.get(index)
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("missing path argument\n\n{USAGE}"))
+// ---------------------------------------------------------------------------
+// argument helpers
+// ---------------------------------------------------------------------------
+
+fn flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|arg| arg == name)
 }
 
+fn option(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|arg| arg == name).and_then(|index| args.get(index + 1)).cloned()
+}
+
+/// Positional arguments, ignoring options and their values.
+fn positional(args: &[String]) -> Vec<&str> {
+    let valued = ["--backup-dir", "--keep", "--mapping"];
+    let mut out = Vec::new();
+    let mut skip = false;
+    for (index, arg) in args.iter().enumerate().skip(1) {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if valued.contains(&arg.as_str()) {
+            skip = true;
+            continue;
+        }
+        if arg.starts_with("--") {
+            continue;
+        }
+        let _ = index;
+        out.push(arg.as_str());
+    }
+    out
+}
+
+fn keys(args: &[String]) -> Result<KeyMap, String> {
+    match option(args, "--mapping") {
+        Some(path) => {
+            let loaded = KeyMap::load(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+            Ok(KeyMap::builtin().extended_with(&loaded))
+        }
+        None => Ok(KeyMap::builtin()),
+    }
+}
+
+/// Write to stdout, treating a closed pipe (`| head`) as success.
+fn write_stdout(bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    match stdout.write_all(bytes).and_then(|()| stdout.flush()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn list_dir(dir: &Path) -> Result<Vec<String>, String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+// ---------------------------------------------------------------------------
+// commands
+// ---------------------------------------------------------------------------
+
 fn cmd_info(args: &[String]) -> Result<(), String> {
-    let path = require_path(args, 1)?;
+    let path = PathBuf::from(positional(args).first().ok_or_else(|| format!("missing path\n\n{USAGE}"))?);
     let raw = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let save = SaveFile::from_bytes(&raw).map_err(|e| e.to_string())?;
     let doc = Document::parse(&save.payload).map_err(|e| e.to_string())?;
-    let keys = KeyMap::builtin();
-    let info = doc.info(&keys);
+    let info = doc.info(&keys(args)?);
 
     println!("file            {}", path.display());
     println!("container       {} ({} blocks)", save.container.name(), save.blocks.len());
     println!("file size       {} bytes", raw.len());
     println!("payload         {} bytes{}", save.payload.len(), if save.trailing_nul { " (+NUL)" } else { "" });
-    if let Some(layout) = save.blocks.first() {
-        let largest = save.blocks.iter().map(|b| b.decompressed).max().unwrap_or(0);
-        println!("block chunks    {largest} max decompressed ({} reserved words non-zero)",
-            save.blocks.iter().filter(|b| b.reserved != 0).count());
-        let _ = layout;
+    if let Some(largest) = save.blocks.iter().map(|b| b.decompressed).max() {
+        println!(
+            "block chunks    {largest} max decompressed ({} reserved words non-zero)",
+            save.blocks.iter().filter(|b| b.reserved != 0).count()
+        );
     }
     println!("json keys       {}", doc.key_count());
     println!("version         {}", info.version.map(|v| v.to_string()).unwrap_or_else(|| "?".into()));
@@ -90,33 +173,158 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
     });
     if let Some(slot) = Slot::from_file_name(&path.file_name().unwrap_or_default().to_string_lossy()) {
         println!("storage slot    {} ({})", slot.index(), slot);
+        let metadata_path = path.with_file_name(slot.metadata_file_name());
+        if metadata_path.is_file() {
+            if let Ok(meta) = Metadata::read(&std::fs::read(&metadata_path).unwrap_or_default(), slot) {
+                println!("metadata says   name={:?} location={:?} mode={:?}", meta.save_name(), meta.location(), meta.game_mode());
+            }
+        }
     }
     Ok(())
 }
 
+fn cmd_get(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let field = positional.get(1).ok_or_else(|| format!("missing field path\n\n{USAGE}"))?;
+    let bundle = SaveBundle::load(Path::new(path), keys(args)?).map_err(|e| e.to_string())?;
+    let value = bundle.get(field).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    write_stdout(format!("{text}\n").as_bytes())
+}
+
+fn cmd_set(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let field = positional.get(1).ok_or_else(|| format!("missing field path\n\n{USAGE}"))?;
+    let raw_value = positional.get(2).ok_or_else(|| format!("missing value\n\n{USAGE}"))?;
+
+    // A value that parses as JSON is used as-is; anything else is a string.
+    let value = serde_json::from_str(raw_value)
+        .unwrap_or_else(|_| serde_json::Value::String((*raw_value).to_string()));
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = SaveBundle::load(&data_path, keys(args)?).map_err(|e| e.to_string())?;
+    bundle.set(field, value).map_err(|e| format!("{field}: {e}"))?;
+
+    let dry_run = flag(args, "--dry-run");
+    let options = CommitOptions {
+        backup_root: Some(
+            option(args, "--backup-dir")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| default_backup_dir(&data_path)),
+        ),
+        keep_backups: option(args, "--keep").and_then(|v| v.parse().ok()).unwrap_or(10),
+        timestamp: Some(now_unix()),
+        dry_run,
+    };
+
+    let report = bundle.commit(&options).map_err(|e| e.to_string())?;
+
+    println!("{} ({})", data_path.display(), bundle.slot);
+    println!("{}", report.changes.field_report());
+    println!("{}", report.changes.summary());
+    for warning in &report.warnings {
+        println!("warning: {warning}");
+    }
+    if dry_run {
+        println!("dry run: nothing was written");
+        return Ok(());
+    }
+    if let Some(backup) = &report.backup {
+        println!("backup: {} ({} bytes)", backup.path.display(), backup.size);
+    }
+    match report.data {
+        nms_format::WriteOutcome::Unchanged => println!("no changes to write"),
+        nms_format::WriteOutcome::Written(bytes) => {
+            let metadata = match report.metadata {
+                nms_format::WriteOutcome::Written(bytes) => format!("{bytes} bytes"),
+                nms_format::WriteOutcome::Unchanged => "unchanged".to_string(),
+            };
+            println!("wrote: {bytes} bytes (metadata: {metadata})");
+        }
+    }
+    Ok(())
+}
+
+fn default_backup_dir(data_path: &Path) -> PathBuf {
+    data_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("Save Backups")
+}
+
+fn cmd_export(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let target = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let out = positional.get(1).map(PathBuf::from);
+    let keys = keys(args)?;
+    let raw_mode = flag(args, "--raw");
+
+    let target_path = PathBuf::from(target);
+    if target_path.is_dir() {
+        let dir = out.unwrap_or_else(|| target_path.clone());
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let mut exported = 0usize;
+        for name in list_dir(&target_path)? {
+            if name.starts_with("mf_") || !name.ends_with(".hg") {
+                continue;
+            }
+            let data_path = target_path.join(&name);
+            let document = SaveBundle::load(&data_path, keys.clone()).map_err(|e| e.to_string())?;
+            let stem = name.trim_end_matches(".hg");
+            export_document(&document, &dir.join(format!("{stem}.json")), raw_mode)?;
+            exported += 1;
+        }
+        eprintln!("exported {exported} save(s) to {}", dir.display());
+        return Ok(());
+    }
+
+    let bundle = SaveBundle::load(&target_path, keys).map_err(|e| e.to_string())?;
+    match out {
+        Some(path) => {
+            export_document(&bundle, &path, raw_mode)?;
+            eprintln!("exported {}", path.display());
+        }
+        None => {
+            let value = if raw_mode { bundle.document.tree().clone() } else { bundle.document.readable(&bundle.keys) };
+            let text = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+            write_stdout(format!("{text}\n").as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
+fn export_document(bundle: &SaveBundle, path: &Path, raw_mode: bool) -> Result<(), String> {
+    let value = if raw_mode { bundle.document.tree().clone() } else { bundle.document.readable(&bundle.keys) };
+    let text = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 fn cmd_dump(args: &[String]) -> Result<(), String> {
-    let path = require_path(args, 1)?;
+    let positional = positional(args);
+    let path = PathBuf::from(positional.first().ok_or_else(|| format!("missing path\n\n{USAGE}"))?);
     let save = SaveFile::read(&path).map_err(|e| e.to_string())?;
-    match args.get(2) {
+    match positional.get(1) {
         Some(out) => {
             std::fs::write(out, &save.payload).map_err(|e| format!("{out}: {e}"))?;
             eprintln!("wrote {} bytes to {out}", save.payload.len());
         }
         None => {
-            use std::io::Write;
-            let mut stdout = std::io::stdout().lock();
-            stdout.write_all(&save.payload).map_err(|e| e.to_string())?;
+            write_stdout(&save.payload)?;
         }
     }
     Ok(())
 }
 
 fn cmd_metadata(args: &[String]) -> Result<(), String> {
-    let path = require_path(args, 1)?;
+    let positional = positional(args);
+    let path = PathBuf::from(positional.first().ok_or_else(|| format!("missing path\n\n{USAGE}"))?);
     let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let slot = Slot::from_metadata_file_name(&name)
         .ok_or_else(|| format!("cannot determine storage slot from {name:?}"))?;
     let meta = read_metadata(&path, slot)?;
+
     println!("file              {}", path.display());
     println!("slot              {} ({})", meta.slot.index(), meta.slot);
     println!("format            0x{:04X}", meta.format_version);
@@ -125,45 +333,26 @@ fn cmd_metadata(args: &[String]) -> Result<(), String> {
     println!("version           0x{:04X} ({})", meta.version, meta.version);
     println!("play time         {} seconds", meta.play_time);
     println!("profile hash      0x{:08X}", meta.profile_hash);
-    println!("words             {}", meta.words.len());
-    let unknown: Vec<String> = meta
-        .words
-        .iter()
-        .enumerate()
-        .filter(|(i, w)| **w != 0 && !matches!(i, 0 | 1 | 14 | 15 | 16 | 17 | 18))
-        .map(|(i, w)| format!("[{i}]=0x{w:08X}"))
-        .collect();
-    println!("other non-zero    {}", if unknown.is_empty() { "none".to_string() } else { unknown.join(" ") });
+    println!("save name        {:?}", meta.save_name());
+    println!("location         {:?}", meta.location());
+    println!("game mode        {:?}", meta.game_mode());
+    println!("timestamp         {}", meta.words.get(89).copied().unwrap_or(0));
 
-    let strings = readable_strings(&meta.words);
-    if !strings.is_empty() {
-        println!("strings           {}", strings.join(" | "));
-    }
-    Ok(())
-}
-
-/// Extract runs of printable ASCII from decrypted metadata words.
-///
-/// Metadata carries human-readable text (the current location name, and the
-/// game mode such as `Normal`), which is useful for slot listings.
-fn readable_strings(words: &[u32]) -> Vec<String> {
-    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    let mut out = Vec::new();
-    let mut current = Vec::new();
-    for byte in bytes {
-        if (0x20..0x7F).contains(&byte) {
-            current.push(byte);
-        } else {
-            if current.len() >= 3 {
-                out.push(String::from_utf8_lossy(&current).into_owned());
+    let listed = args.iter().any(|arg| arg == "--words");
+    if listed {
+        for (index, word) in meta.words.iter().enumerate() {
+            if *word == 0 {
+                continue;
             }
-            current.clear();
+            let ascii: String = word
+                .to_le_bytes()
+                .iter()
+                .map(|b| if (0x20..0x7F).contains(b) { *b as char } else { '.' })
+                .collect();
+            println!("  [{index:02}] 0x{word:08X} {word:>12}  {ascii}");
         }
     }
-    if current.len() >= 3 {
-        out.push(String::from_utf8_lossy(&current).into_owned());
-    }
-    out
+    Ok(())
 }
 
 fn read_metadata(path: &Path, slot: Slot) -> Result<Metadata, String> {
@@ -171,42 +360,66 @@ fn read_metadata(path: &Path, slot: Slot) -> Result<Metadata, String> {
     Metadata::read(&bytes, slot).map_err(|e| e.to_string())
 }
 
+fn cmd_backup(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
+    let keep = option(args, "--keep").and_then(|v| v.parse().ok()).unwrap_or(10);
+    let root = option(args, "--backup-dir").map(PathBuf::from).unwrap_or_else(|| dir.join("Save Backups"));
+
+    let store = nms_edit::BackupStore::new(root.clone(), keep);
+    let mut files = Vec::new();
+    for name in list_dir(&dir)? {
+        if name.ends_with(".hg") {
+            files.push((name.clone(), dir.join(&name)));
+        }
+    }
+    if files.is_empty() {
+        return Err(format!("no .hg files in {}", dir.display()));
+    }
+    let label = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "save".into());
+    match store.create(&label, &files, now_unix()).map_err(|e| e.to_string())? {
+        Some(entry) => {
+            println!("backup: {} ({} files, {} bytes)", entry.path.display(), files.len(), entry.size);
+            let kept = store.list(&label).map_err(|e| e.to_string())?;
+            println!("retained {} backup(s) for {label} (limit {keep})", kept.len());
+        }
+        None => println!("nothing to back up"),
+    }
+    Ok(())
+}
+
 fn cmd_slots(args: &[String]) -> Result<(), String> {
-    let dir = require_path(args, 1)?;
-    let entries = list_dir(&dir)?;
+    let positional = positional(args);
+    let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
+    let keys = keys(args)?;
     let mut found = 0usize;
 
-    for name in entries {
+    for name in list_dir(&dir)? {
         let Some(slot) = Slot::from_file_name(&name) else { continue };
         let path = dir.join(&name);
         let Ok(raw) = std::fs::read(&path) else { continue };
 
-        let meta_name = slot.metadata_file_name();
-        let meta = read_metadata(&dir.join(&meta_name), slot).ok();
-
-        let detail = match SaveFile::from_bytes(&raw).and_then(|s| Ok(Document::parse(&s.payload).map_err(|e| {
-            nms_format::FormatError::Decompress { offset: 0, message: e.to_string() }
-        })?)) {
-            Ok(doc) => {
-                let info = doc.info(&KeyMap::builtin());
+        let meta = read_metadata(&dir.join(slot.metadata_file_name()), slot).ok();
+        let detail = match SaveBundle::load(&path, keys.clone()) {
+            Ok(bundle) => {
+                let info = bundle.info();
                 format!(
                     "{:<10} v{:<5} ctx={:<8} play={:<9} name={}",
                     info.platform.unwrap_or_else(|| "?".into()),
                     info.version.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
                     info.active_context.unwrap_or_else(|| "?".into()),
                     info.play_time.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
-                    info.save_name.unwrap_or_else(|| "-".into()),
+                    meta.as_ref().map(|m| m.save_name()).filter(|n| !n.is_empty()).unwrap_or_else(|| "-".into()),
                 )
             }
             Err(e) => format!("unreadable: {e}"),
         };
-
-        let meta_detail = match meta {
-            Some(m) => format!("meta v{} {} bytes", m.version, m.decompressed_size),
+        let meta_detail = match &meta {
+            Some(m) => format!("meta v{} {:<8} {}", m.version, m.location(), m.game_mode()),
             None => "meta: unavailable".to_string(),
         };
 
-        println!("{:<14} {:<12} {:>10} bytes  {}  |  {}", name, slot.to_string(), raw.len(), detail, meta_detail);
+        println!("{:<12} {:<12} {:>10} bytes  {}  |  {}", name, slot.to_string(), raw.len(), detail, meta_detail);
         found += 1;
     }
 
@@ -227,14 +440,17 @@ struct VerifyRow {
 }
 
 fn cmd_verify(args: &[String]) -> Result<(), String> {
-    let dir = require_path(args, 1)?;
-    let entries = list_dir(&dir)?;
+    let positional = positional(args);
+    let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
     let mut rows = Vec::new();
 
-    for name in entries.iter().filter(|n| n.ends_with(".hg")) {
-        let path = dir.join(name);
+    for name in list_dir(&dir)? {
+        if !name.ends_with(".hg") {
+            continue;
+        }
+        let path = dir.join(&name);
         let Ok(raw) = std::fs::read(&path) else { continue };
-        rows.push(verify_one(name, &raw));
+        rows.push(verify_one(&name, &raw));
     }
 
     if rows.is_empty() {
@@ -270,11 +486,6 @@ fn cmd_verify(args: &[String]) -> Result<(), String> {
 }
 
 /// Check one file against the guarantee that applies to its kind.
-///
-/// * metadata: decryption + re-encryption must reproduce the file exactly;
-/// * plain JSON: the file is the payload, so it must round-trip byte-exactly;
-/// * block stream: the payload must survive re-encoding, and the document layer
-///   must return the original payload when nothing was edited.
 fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
     let mut row = VerifyRow {
         name: name.to_string(),
@@ -289,7 +500,7 @@ fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
         row.kind = "metadata".into();
         match Metadata::read(raw, slot) {
             Ok(meta) => {
-                row.payload = meta.words.len().to_string() + " words";
+                row.payload = format!("{} words", meta.words.len());
                 match meta.to_bytes() {
                     Ok(again) if again == raw => {
                         row.container = "byte-exact".into();
@@ -310,8 +521,7 @@ fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
             row.kind = save.container.name().into();
             row.payload = save.payload.len().to_string();
 
-            let reparsed = SaveFile::from_bytes(&save.to_bytes());
-            row.container = match &reparsed {
+            row.container = match SaveFile::from_bytes(&save.to_bytes()) {
                 Ok(again) if again.stored_payload() == save.stored_payload() => {
                     if save.container == nms_format::Container::PlainJson {
                         if save.to_bytes() == raw {
@@ -347,27 +557,15 @@ fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
 }
 
 fn cmd_mapping(args: &[String]) -> Result<(), String> {
-    let path = require_path(args, 1)?;
+    let positional = positional(args);
+    let path = PathBuf::from(positional.first().ok_or_else(|| format!("missing path\n\n{USAGE}"))?);
     let map = KeyMap::load(&path).map_err(|e| e.to_string())?;
     println!("{}: {} key mappings", path.display(), map.len());
-    for name in ["Version", "Platform", "ActiveContext", "SaveName", "TotalPlayTime"] {
-        println!(
-            "  {:<14} -> {}",
-            name,
-            map.candidates(name).last().unwrap_or("(unmapped)")
-        );
+    for name in ["Version", "Platform", "ActiveContext", "SaveName", "TotalPlayTime", "SaveSummary"] {
+        println!("  {:<14} -> {}", name, map.candidates(name).last().unwrap_or("(unmapped)"));
     }
     let merged = KeyMap::builtin().extended_with(&map);
     println!("merged with builtin: {} entries", merged.len());
+    let _ = MetadataPatch::default();
     Ok(())
-}
-
-fn list_dir(dir: &Path) -> Result<Vec<String>, String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .map_err(|e| format!("{}: {e}", dir.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    Ok(names)
 }

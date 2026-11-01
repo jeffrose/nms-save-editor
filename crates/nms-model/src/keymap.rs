@@ -35,15 +35,29 @@ impl KeyMap {
     /// not hand-copied into source.
     pub fn builtin() -> KeyMap {
         const PAIRS: &[(&str, &str)] = &[
+            // Root fields.
             ("F2P", "Version"),
             ("8>q", "Platform"),
             ("XTp", "ActiveContext"),
             ("<h0", "CommonStateData"),
+            ("vLc", "BaseContext"),
+            ("2YS", "ExpeditionContext"),
+            ("fDu", "DiscoveryManagerData"),
+            // Common state.
             ("Pk4", "SaveName"),
             ("Lg8", "TotalPlayTime"),
             ("kPF", "UsesThirdPersonCharacterCam"),
             ("wb:", "UsesThirdPersonVehicleCam"),
             ("Wh<", "UsesThirdPersonShipCam"),
+            // Player state, reached through a context (BaseContext or ExpeditionContext).
+            ("6f=", "PlayerStateData"),
+            ("rnc", "SpawnStateData"),
+            ("n:R", "SaveSummary"),
+            ("LyC", "DifficultyState"),
+            ("brJ", "Preset"),
+            ("qAf", "EasiestUsedPreset"),
+            ("4I:", "HardestUsedPreset"),
+            ("7ND", "DifficultyPresetType"),
         ];
         let mut map = KeyMap::default();
         for (obfuscated, readable) in PAIRS {
