@@ -58,18 +58,27 @@ tried in order, each accepted only if the text tables actually have it:
 | `BASE_BUBBLECLUS` | `BLD_BUBBLECLUSTER_NAME` (truncated stem) | BUBBLE CLUSTER |
 | `BUILDBEACON` | `BLD_BEACON_NAME` | SAVE BEACON |
 | `MAINT_REFINER` | the technology table's own key | REFINERY OUTPUT |
+| `B_SHL_A` | `BLD_BIG_SHL_A_NAME` (corvette module) | DEFLECTOR SHIELD |
+| `B_COK_C4` | `BLD_BIG_COK1X2_C4_NAME` (size infix) | VIPER-I-CLASS COCKPIT |
+| `FIGHT_COCKAA` | `UI_FIGHTER_COCK_AA_NAME` | OMEGA FUSELAGE |
+| `SAIL_BODYA` | `UI_SAIL_BODY_A_NAME` | RAVEN COCKPIT |
+| `BUILD_REFINER1` | `REFINER1_NAME` | PORTABLE REFINER |
+
+Every rule is a *candidate*: it is accepted only when the text tables contain the
+key, so a convention that changes with a game update loses names rather than
+inventing them.
 
 ## What the editor shows today
 
 Given the 1,108 distinct item ids in a real save, `nmsedit data item` produces
-text for **954 of them (86%)**, and each answer says where it came from:
+text for **1,038 of them (93%)**, and each answer says where it came from:
 
 | Source | Count | Meaning |
 |---|---|---|
 | item table | 484 | a join from products, substances or technologies |
 | custom name | 426 | the id field holds a generated name, which *is* the display text |
+| derived key | 99 | one of the locate-rules above |
 | placeholder | 19 | a damaged or empty slot with no name anywhere |
-| derived key | 15 | one of the locate-rules above |
 
 Nothing is invented: an id that resolves to no text is reported as unresolved
 rather than shown as a guess.
@@ -80,14 +89,36 @@ game's own text wins and the placeholder label is only the fallback. That is the
 opposite of what a heuristic would do, and it is why the data-driven order
 matters.
 
+## Categories, and what metadata is still missing
+
+**Categories are extracted and verified.** The pack records `Product`,
+`Substance` or `Technology` for every id that came from an item table, and that
+distinction can be checked against a real save, which stores its own
+`InventoryType` per slot: **3,351 slots agree, 0 disagree.**
+
+Two other kinds of metadata are *not* extracted yet, and both are recorded here
+with the evidence rather than guessed at:
+
+* **Base value (units).** The save does not store it, so there is no oracle to
+  check an extracted number against. `costtable.mbin` is not it either — its
+  entries are mission and expedition reward costs (`C_ATLAS_FINAL`,
+  `POLOMONEY1`, …). Finding it means identifying the product table's
+  `BaseValueUnits` field by some other means.
+* **Stack size.** The save *does* record it (`MaxAmount` per slot), and it varies
+  by inventory type for the same item (`MAINT_REFINER` appears with both 101 and
+  201), so it is derived rather than stored per item — most likely a category and
+  inventory-type base multiplied by a per-item factor. The stack constants
+  (20, 50, 100, 250, 500, 9999, 10000) appear in many tables, with
+  `inventorytable.mbin` the most likely source. The save's own `MaxAmount` values
+  are the oracle to validate against once found.
+* **Recipes** live in `nms_reality_gcrecipetable.mbin` (322 KB), another grid.
+
 ## Next
 
-* **The remaining 164 ids** are procedural and ingredient ids (`B_ALK_A`,
-  `B_COK_C1`, `BUILD_REFINER1`, …). Candidate tables, all in
-  `NMSARC.Precache.pak`: `proceduralproducttable.mbin`,
-  `consumableitemtable.mbin`, `nms_reality_gcrecipetable.mbin`,
-  `basebuildingcoststable.mbin`.
-* **Item metadata beyond names**: category, base value, stack size, and the
-  technology adjacency rules, all of which live in the same tables.
+* **The remaining 80 ids** are corvette module variants with left/right and
+  decorative markers (`B_CON_L_0`, `B_CON_R_3`, `B_DECO_N_1`, …), plus a handful
+  of ship hull parts whose save ids are truncated (`SCIEN_COCKAB` for
+  `UI_SCIENTIFIC_COCK_ABA_NAME`).
 * **`maintenancegroupstable.mbin`** explains the `MAINT_*` ids and would let the
   editor show which component a damaged slot belongs to.
+* **Base value and stack size**, as above.

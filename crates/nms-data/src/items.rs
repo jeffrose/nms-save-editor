@@ -70,6 +70,17 @@ pub struct TableLayout {
 }
 
 impl TableLayout {
+    /// The category items from this table belong to.
+    pub fn category(&self) -> ItemCategory {
+        if self.name.contains("product") {
+            ItemCategory::Product
+        } else if self.name.contains("substance") {
+            ItemCategory::Substance
+        } else {
+            ItemCategory::Technology
+        }
+    }
+
     /// Products: most inventory items.
     pub const PRODUCTS: TableLayout = TableLayout {
         name: "nms_reality_gcproducttable.mbin",
@@ -110,11 +121,39 @@ impl TableLayout {
     pub const ALL: [TableLayout; 3] = [TableLayout::PRODUCTS, TableLayout::SUBSTANCES, TableLayout::TECHNOLOGIES];
 }
 
+/// What kind of thing an item id names.
+///
+/// The category comes from the table an id was found in, which is the same
+/// distinction the save itself records in its inventory slots (`InventoryType`),
+/// so it can be cross-checked against a real save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemCategory {
+    /// From the product table: most inventory items.
+    Product,
+    /// From the substance table: the elements.
+    Substance,
+    /// From the technology table: installed technology.
+    Technology,
+}
+
+impl ItemCategory {
+    /// The name used in the data pack.
+    pub fn label(self) -> &'static str {
+        match self {
+            ItemCategory::Product => "Product",
+            ItemCategory::Substance => "Substance",
+            ItemCategory::Technology => "Technology",
+        }
+    }
+}
+
 /// What one table's extraction found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ItemExtraction {
     /// Table file name.
     pub table: String,
+    /// Category every item from this table has.
+    pub category: Option<ItemCategory>,
     /// `id -> name key`, in table order.
     pub pairs: Vec<(String, String)>,
     /// Records the grid declared.
@@ -170,7 +209,11 @@ fn choose_key(data: &[u8], key_offset: usize, strings: &BTreeMap<String, String>
 
 /// Extract `(id, name key)` pairs from one table.
 pub fn extract_table(data: &[u8], layout: &TableLayout, strings: &BTreeMap<String, String>) -> ItemExtraction {
-    let mut extraction = ItemExtraction { table: layout.name.to_string(), ..Default::default() };
+    let mut extraction = ItemExtraction {
+        table: layout.name.to_string(),
+        category: Some(layout.category()),
+        ..Default::default()
+    };
     if data.len() < layout.count_offset + 4 || data.len() < layout.stride {
         return extraction;
     }
@@ -216,6 +259,7 @@ fn grid_base(data: &[u8], layout: &TableLayout) -> Option<usize> {
 #[derive(Debug, Clone, Default)]
 pub struct ItemIndex {
     items: BTreeMap<String, String>,
+    categories: BTreeMap<String, ItemCategory>,
     /// How the index was built, for reporting.
     pub report: ItemIndexReport,
 }
@@ -295,15 +339,16 @@ impl ItemIndex {
         let mut items = BTreeMap::new();
         let mut report = ItemIndexReport::default();
 
+        let mut categories = BTreeMap::new();
         for extraction in extractions {
             let mut resolved = 0usize;
             for (id, key) in &extraction.pairs {
-                match strings.get(key) {
-                    Some(text) if !text.is_empty() => {
-                        items.insert(id.clone(), text.clone());
-                        resolved += 1;
+                if let Some(text) = strings.get(key).filter(|text| !text.is_empty()) {
+                    items.insert(id.clone(), text.clone());
+                    if let Some(category) = extraction.category {
+                        categories.insert(id.clone(), category);
                     }
-                    _ => {}
+                    resolved += 1;
                 }
             }
             report.tables.push(TableReport {
@@ -324,7 +369,12 @@ impl ItemIndex {
             report.derived += 1;
         }
 
-        ItemIndex { items, report }
+        ItemIndex { items, categories, report }
+    }
+
+    /// The category an id belongs to, when it came from an item table.
+    pub fn category(&self, id: &str) -> Option<ItemCategory> {
+        self.categories.get(id.trim_start_matches(['^', '!'])).copied()
     }
 
     /// Number of named items.
@@ -381,12 +431,48 @@ impl ItemIndex {
             candidates.push(format!("{digits}_{number}_NAME"));
             candidates.push(format!("UI_{digits}_{number}_NAME"));
         }
-        // Base parts are named `BLD_<stem>_NAME` for the id `BASE_<stem>`, and
-        // save beacons are `BUILDBEACON` for `BLD_BEACON_NAME`.
-        let part_stem = bare.strip_prefix("BASE_").or_else(|| bare.strip_prefix("BUILD"));
+        // Base parts are named `BLD_<stem>_NAME` for the id `BASE_<stem>`, save
+        // beacons are `BUILDBEACON` for `BLD_BEACON_NAME`, and corvette modules
+        // are `B_<stem>` for `BLD_BIG_<stem>_NAME`. The prefix expansions are
+        // pure conventions, and each candidate is still only accepted if the
+        // text tables have it.
+        let part_stem = bare.strip_prefix("BASE_").or_else(|| bare.strip_prefix("SB_")).or_else(|| {
+            bare.strip_prefix("BUILD").map(|rest| rest.strip_prefix('_').unwrap_or(rest))
+        });
         if let Some(stem) = part_stem {
-            let stem = stem.strip_prefix('_').unwrap_or(stem);
             candidates.push(format!("BLD_{stem}_NAME"));
+        }
+        if let Some(stem) = bare.strip_prefix("B_") {
+            candidates.push(format!("BLD_BIG_{stem}_NAME"));
+            // The cockpit and wing families carry a size infix in their keys:
+            // the id `B_COK_A` is named by `BLD_BIG_COK1X2_A_NAME`.
+            for family in ["COK", "WNG", "ENG", "TUR", "SHL", "TRU", "CON", "ALK", "HULL", "STR"] {
+                if let Some(rest) = stem.strip_prefix(family) {
+                    let rest = rest.strip_prefix('_').unwrap_or(rest);
+                    candidates.push(format!("BLD_BIG_{family}1X2_{rest}_NAME"));
+                }
+            }
+        }
+        // Ship hull parts: `FIGHT_COCKAA` is `UI_FIGHTER_COCK_AA_NAME`, and
+        // `SCIEN_COCKAB` is `UI_SCIENTIFIC_COCK_ABA_NAME`.
+        for (save_prefix, key_prefix) in [("FIGHT_", "UI_FIGHTER_"), ("SCIEN_", "UI_SCIENTIFIC_")] {
+            if let Some(rest) = bare.strip_prefix(save_prefix) {
+                // The key separates a trailing part index of one or two letters:
+                // `FIGHT_COCKAA` is `UI_FIGHTER_COCK_AA_NAME`.
+                let letters = rest.len() - rest.trim_end_matches(|c: char| c.is_ascii_uppercase()).len();
+                for take in [2usize, 1] {
+                    if letters >= take && rest.len() > take {
+                        let (stem, suffix) = rest.split_at(rest.len() - take);
+                        let stem = stem.trim_end_matches('_');
+                        if !stem.is_empty() {
+                            candidates.push(format!("{key_prefix}{stem}_{suffix}_NAME"));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(stem) = bare.strip_prefix("BUILD_") {
+            candidates.push(format!("{stem}_NAME"));
         }
         for candidate in candidates {
             if let Some(text) = strings.get(&candidate) {
@@ -597,6 +683,34 @@ mod tests {
         assert_eq!(
             ItemIndex::resolve_against("^BASE_BUBBLECLUS", &text),
             Some(("BUBBLE CLUSTER", NameSource::Derived))
+        );
+    }
+
+    #[test]
+    fn expands_corvette_and_ship_part_prefixes() {
+        let text = strings(&[
+            ("BLD_BIG_SHL_A_NAME", "DEFLECTOR SHIELD"),
+            ("BLD_BIG_COK1X2_C4_NAME", "VIPER-I-CLASS COCKPIT"),
+            ("UI_FIGHTER_COCK_AA_NAME", "OMEGA FUSELAGE"),
+            ("UI_SCIENTIFIC_COCK_ABA_NAME", "FIREFLY S-HULL"),
+            ("REFINER1_NAME", "PORTABLE REFINER"),
+        ]);
+        assert_eq!(
+            ItemIndex::resolve_against("B_SHL_A", &text),
+            Some(("DEFLECTOR SHIELD", NameSource::Derived))
+        );
+        // The cockpit family carries a size infix in the key.
+        assert_eq!(
+            ItemIndex::resolve_against("B_COK_C4", &text),
+            Some(("VIPER-I-CLASS COCKPIT", NameSource::Derived))
+        );
+        assert_eq!(
+            ItemIndex::resolve_against("FIGHT_COCKAA", &text),
+            Some(("OMEGA FUSELAGE", NameSource::Derived))
+        );
+        assert_eq!(
+            ItemIndex::resolve_against("BUILD_REFINER1", &text),
+            Some(("PORTABLE REFINER", NameSource::Derived))
         );
     }
 

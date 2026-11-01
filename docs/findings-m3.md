@@ -70,9 +70,25 @@ text table:
   a separated trailing number (`FUEL2` → `UI_FUEL_2_NAME`), and the id itself as
   a key.
 
-Of the 1,108 distinct item ids in a real save, **954 (86%) now produce text**,
-each labelled with its source (item table 484, custom name 426, placeholder 19,
-derived key 15). Nothing is guessed: unresolved ids are reported as such.
+Prefix conventions cover the rest, each accepted only when the text tables have
+the key: `B_<x>` → `BLD_BIG_<x>_NAME` for corvette modules (with a size infix for
+the cockpit and wing families), `FIGHT_`/`SCIEN_` → `UI_FIGHTER_`/`UI_SCIENTIFIC_`
+for ship hull parts, `BUILD_` → plain strip, `SB_` → `BLD_`.
+
+Of the 1,108 distinct item ids in a real save, **1,038 (93%) now produce text**,
+each labelled with its source (item table 484, custom name 426, derived key 99,
+placeholder 19). Nothing is guessed: unresolved ids are reported as such.
+
+**Categories are cross-checked against the save itself.** The pack labels every
+table-derived id `Product`, `Substance` or `Technology`, and the save records the
+same distinction per slot: 3,351 slots agree and none disagree, which is the
+strongest available evidence that the three tables were read correctly.
+
+Base value and stack size are deliberately *not* extracted yet: neither has an
+oracle to validate against (the save does not store base value, and its stack
+sizes are derived per inventory type), and this project's rule is to document a
+missing field rather than guess one. The leads are in
+[item-tables.md](format/item-tables.md).
 
 ## Still open
 

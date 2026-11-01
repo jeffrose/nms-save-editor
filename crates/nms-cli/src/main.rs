@@ -764,6 +764,12 @@ fn cmd_data_info(args: &[String]) -> Result<(), String> {
     println!("generated       {} ({})", pack.generated_at, nms_edit::format_timestamp(pack.generated_at));
     println!("strings         {} ({} with text, {} empty)", pack.len(), filled, pack.len() - filled);
     println!("items           {} named", pack.item_count());
+    let mut by_category: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for category in pack.categories.values() {
+        *by_category.entry(category.as_str()).or_default() += 1;
+    }
+    let summary: Vec<String> = by_category.iter().map(|(k, v)| format!("{k} {v}")).collect();
+    println!("categories      {}", summary.join(", "));
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     println!("file size       {size} bytes");
     Ok(())
@@ -779,7 +785,11 @@ fn cmd_data_item(args: &[String]) -> Result<(), String> {
     let mut missing = 0usize;
     for id in ids {
         match pack.item_name_with_source(id) {
-            Some((name, source)) => println!("{id:<32} {name:<34} [{}]", source.label()),
+            Some((name, source)) => println!(
+                "{id:<32} {name:<34} [{}{}]",
+                source.label(),
+                pack.item_category(id).map(|c| format!(", {c}")).unwrap_or_default()
+            ),
             None => {
                 println!("{id:<32} (no name found)");
                 missing += 1;

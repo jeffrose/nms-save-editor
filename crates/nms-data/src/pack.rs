@@ -14,7 +14,7 @@ use crate::items::{ItemIndex, TableLayout, extract_table};
 use crate::{DataError, language};
 
 /// Pack format version. Bump when the layout changes incompatibly.
-pub const PACK_FORMAT: u32 = 1;
+pub const PACK_FORMAT: u32 = 2;
 
 /// What a build did, for reporting.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -60,6 +60,11 @@ pub struct DataPack {
     /// `item id -> display name`, joined from the item tables and the text.
     #[serde(default)]
     pub items: BTreeMap<String, String>,
+    /// `item id -> category` (`Product`, `Substance`, `Technology`), for the ids
+    /// that came from an item table. The save records the same distinction in
+    /// its inventory slots, so this is cross-checkable.
+    #[serde(default)]
+    pub categories: BTreeMap<String, String>,
 }
 
 impl DataPack {
@@ -155,6 +160,10 @@ impl DataPack {
                 .to_string(),
             strings,
             items: index.iter().map(|(id, text)| (id.clone(), text.clone())).collect(),
+            categories: index
+                .iter()
+                .filter_map(|(id, _)| index.category(id).map(|category| (id.clone(), category.label().to_string())))
+                .collect(),
         };
         Ok((pack, report))
     }
@@ -192,6 +201,11 @@ impl DataPack {
     /// Number of named items.
     pub fn item_count(&self) -> usize {
         self.items.len()
+    }
+
+    /// The category an item belongs to, when it came from an item table.
+    pub fn item_category(&self, id: &str) -> Option<&str> {
+        self.categories.get(id.trim_start_matches(['^', '!'])).map(String::as_str)
     }
 
     /// Write the pack as JSON.
@@ -282,6 +296,7 @@ mod tests {
             notes: "test".into(),
             strings: BTreeMap::new(),
             items: BTreeMap::new(),
+            categories: BTreeMap::new(),
         };
         pack.strings.insert("UI_VR_RECENTRE".into(), "Recentre VR View".into());
         pack.strings.insert("UI_EMPTY".into(), String::new());
