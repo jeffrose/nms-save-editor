@@ -17,62 +17,77 @@ words, and rules for the ids that have neither.
 
 All of them are inside `NMSARC.Precache.pak` and `NMSARC.MetadataEtc.pak`.
 
-## The product table is a grid
+## Each table is a grid, and the name key is at a fixed offset
 
 ```text
-record + 0x000  "UI_CRAFT_OBJ"            fixed 64-byte text slot
-record + 0x040  "UI_PIN_<ID>_OBJ_TIP"     fixed 32-byte text slot
-record + 0x0C0  <ID>                      fixed 16-byte text slot
-record + 0x160  <name key>                fixed 128-byte text slot
-record + 0x1E0  <name key>_L              lower-case variant
-stride          768 bytes
+                 stride   id at   name key at     records   named
+products          768     +0xC0    +0x160          2,206    96%
+substances        416     +0x88    +0xF4             114    71%
+technologies      736     +0x138   +0x1F4            393    94%
 ```
 
-Records are walked on that grid. A position whose id or name slot does not hold
-plausible text is skipped rather than shifting everything after it, so a record
-with a different shape costs one entry instead of corrupting the rest.
+The offsets are *fixed*: with a correct grid, every resolved record in each table
+puts its name key at exactly the same distance after the id (verified by the
+offset histogram of all 2,131 + 82 + 392 resolved records). The apparent variation
+that a naive scan sees comes from the bytes *before* the key — a float's last byte
+is usually `'A'`, so a scanner happily invents keys like `APROTECT_NAME`. Reading
+the slot at a known offset avoids that entirely.
 
-**The resolution rate is the self-check.** Every extracted key is looked up in
-the text tables; in the observed build 2,188 of 2,261 keys resolve (96%). A
-layout change makes that number collapse, which is a loud failure rather than
-wrong names.
+Each table's record count is declared in its header (`0x28` for products and
+technologies, `0x38` for substances), so a walk stops exactly at the end of the
+item array and never reads whatever follows it as items.
 
-## Why the key cannot just be derived from the id
+**The resolution rate is the self-check.** Every key read from a table is looked
+up in the text tables, and only a key that exists is accepted: a wrong offset
+produces *fewer* names, never wrong ones. A layout change collapses the rate,
+which is a loud failure.
 
-Three real cases, all present in the game's data:
+## The locate-rules, in the order they are tried
 
-| Save id | Name key | Note |
+The key is not derivable from the id in general, so a handful of conventions are
+tried in order, each accepted only if the text tables actually have it:
+
+| Save id | Resolves via | Text |
 |---|---|---|
-| `CASING` | `CASING_NAME` | the common case |
-| `ANTIMATTER` | `COMMODITY6_NAME` | commodities use their own naming |
-| `BIOSHIP_COMP5_0` | `UI_BIOSHIP_COMP5_NAME0` | procedural ship parts |
-| `FUEL2` | `UI_FUEL_2_NAME` | a trailing number gains an underscore |
-| `OXYGEN` | `UI_AIR1_NAME` | **the save's id is not the table's id** |
-
-That last row is the substance namespace: the save calls the element `OXYGEN`
-while the substance table's id is `AIR1` and its wiki key is `WIKI_OXYGEN`.
-Resolving those needs the substance table's own fields, which is the next step.
+| `CASING` | `CASING_NAME` | METAL PLATING |
+| `ANTIMATTER` | `COMMODITY6_NAME` (from the product table) | ANTIMATTER |
+| `OXYGEN` | `UI_AIR1_NAME` (from the substance table) | OXYGEN |
+| `FUEL2` | `UI_FUEL_2_NAME` (trailing number separated) | CONDENSED CARBON |
+| `UT_PROTECT` | `UT_PROTECT_NAME` (from the technology table) | SHIELD LATTICE |
+| `BASE_BONEGARDEN` | `BLD_BONEGARDEN_NAME` | RATTLE SPINE |
+| `BASE_BUBBLECLUS` | `BLD_BUBBLECLUSTER_NAME` (truncated stem) | BUBBLE CLUSTER |
+| `BUILDBEACON` | `BLD_BEACON_NAME` | SAVE BEACON |
+| `MAINT_REFINER` | the technology table's own key | REFINERY OUTPUT |
 
 ## What the editor shows today
 
 Given the 1,108 distinct item ids in a real save, `nmsedit data item` produces
-text for 866 of them (78%), and each answer says where it came from:
+text for **954 of them (86%)**, and each answer says where it came from:
 
 | Source | Count | Meaning |
 |---|---|---|
-| custom name | 425 | the id field holds a generated name, which *is* the display text |
-| item table | 282 | a real join (`CASING` → `METAL PLATING`) |
-| derived key | 80 | `<id>_NAME`, `UI_<id>_NAME`, or the trailing-number form |
-| placeholder | 66 | `MAINT_*`: a damaged or empty slot, labelled as such |
-| direct key | 2 | the id is itself a text key |
+| item table | 484 | a join from products, substances or technologies |
+| custom name | 426 | the id field holds a generated name, which *is* the display text |
+| placeholder | 19 | a damaged or empty slot with no name anywhere |
+| derived key | 15 | one of the locate-rules above |
 
 Nothing is invented: an id that resolves to no text is reported as unresolved
 rather than shown as a guess.
 
+Damaged components deserve a note: the technology table names them itself
+(`MAINT_REFINER` → REFINERY OUTPUT, `MAINT_TECH5` → BIO-INPUT SENSOR), so the
+game's own text wins and the placeholder label is only the fallback. That is the
+opposite of what a heuristic would do, and it is why the data-driven order
+matters.
+
 ## Next
 
-* **Substance and technology tables** — different record layouts (the technology
-  table's stride is 736 with the name key 0xBB after the id) to close the
-  remaining ~240 ids.
+* **The remaining 164 ids** are procedural and ingredient ids (`B_ALK_A`,
+  `B_COK_C1`, `BUILD_REFINER1`, …). Candidate tables, all in
+  `NMSARC.Precache.pak`: `proceduralproducttable.mbin`,
+  `consumableitemtable.mbin`, `nms_reality_gcrecipetable.mbin`,
+  `basebuildingcoststable.mbin`.
 * **Item metadata beyond names**: category, base value, stack size, and the
   technology adjacency rules, all of which live in the same tables.
+* **`maintenancegroupstable.mbin`** explains the `MAINT_*` ids and would let the
+  editor show which component a damaged slot belongs to.

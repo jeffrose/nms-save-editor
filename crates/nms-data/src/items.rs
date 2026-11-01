@@ -1,55 +1,128 @@
 //! Item names, joined from the game's item tables and its text tables.
 //!
-//! A save stores item ids (`^CARBON_SEAL`, `^ANTIMATTER`, `^FUEL2`), not names.
-//! The names live in the localisation tables under keys that the *item tables*
-//! point at, so an editor needs the join. Two facts make that awkward, and both
-//! are why the older editor shipped a hand-maintained item list:
+//! A save stores item ids (`^CARBON_SEAL`, `^FUEL2`, `^UT_PROTECT`), not names.
+//! Names come from joining an item table's name key with a text table, so an
+//! editor needs both. Three facts make that awkward, and all three are why the
+//! older editor shipped a hand-maintained item list:
 //!
-//! * the display key is **not** always derived from the id — `ANTIMATTER`'s name
-//!   key is `COMMODITY6_NAME`, and `BIOSHIP_COMP5_0`'s is
-//!   `UI_BIOSHIP_COMP5_NAME0` — so the key has to be read from the table;
-//! * several id namespaces coexist: the substance the save calls `OXYGEN` has
-//!   the table id `AIR1` and the name key `UI_AIR1_NAME`.
+//! * the display key is **not** derivable from the id — `ANTIMATTER`'s key is
+//!   `COMMODITY6_NAME`, `OXYGEN`'s is `UI_AIR1_NAME`, `UT_PROTECT`'s is
+//!   `UT_PROTECT_NAME`;
+//! * each table has its own record grid, and the name key's distance from the id
+//!   **varies between records** (a variable-length field precedes it), so a fixed
+//!   offset cannot be used;
+//! * the fields before a key end in bytes that look like text (a float's last
+//!   byte is often `'A'`), so a naive scan invents keys like `APROTECT_NAME`.
 //!
-//! The product table (`nms_reality_gcproducttable.mbin`) is laid out as a grid
-//! of fixed-size records, which is what this module exploits:
+//! The approach here is deliberately evidence-driven:
 //!
-//! ```text
-//! record + 0x000  "UI_CRAFT_OBJ"            (fixed 64-byte text slot)
-//! record + 0x040  "UI_PIN_<ID>_OBJ_TIP"     (fixed 32-byte text slot)
-//! record + 0x0C0  <ID>                      (fixed 16-byte text slot)
-//! record + 0x160  <name key>                (fixed 128-byte text slot)
-//! record + 0x1E0  <name key>_L              (lower-case variant)
-//! stride          768 bytes
-//! ```
+//! 1. walk each table on its own record grid, bounded by the table's declared
+//!    count (so trailing non-item data is never read as items);
+//! 2. read the id from its fixed slot in the record;
+//! 3. search the rest of the record for `*_NAME` candidates, undoing a stray
+//!    leading byte, and keep the one that **resolves in the text tables** —
+//!    preferring `<id>_NAME`;
+//! 4. report how many resolved, per table.
 //!
-//! Records are walked on that grid and a position is skipped when both slots do
-//! not hold plausible text, so a record whose shape differs is skipped rather
-//! than shifting everything after it. Every extracted key is then resolved
-//! against the text tables, and the resolution rate is reported: that rate is
-//! the self-check. In the observed build it is 96% over 2,261 records, and a
-//! layout change would make it collapse instead of producing wrong names.
+//! Step 3 is what makes this safe: a key that does not exist in the text tables
+//! is never accepted, so a wrong layout yields *fewer* names rather than wrong
+//! ones. In the observed build the rates are 96% (products), 68% (substances)
+//! and 62% (technologies).
 
 use std::collections::BTreeMap;
 
-/// Distance between records in the product table.
-const PRODUCT_STRIDE: usize = 768;
-/// Offset of the id within a product record.
-const PRODUCT_ID_OFFSET: usize = 0xC0;
-/// Offset of the name key within a product record.
-const PRODUCT_NAME_OFFSET: usize = 0x160;
-/// Bytes reserved for a text slot, used to bound reads.
+/// A text slot is read up to this many bytes, or to its NUL.
 const SLOT_SCAN: usize = 0x80;
 
-/// What an extraction found.
+/// How a table's record grid is located.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridBase {
+    /// Records start at the first occurrence of this marker (e.g. the substance
+    /// table's `UI_GATHER_OBJ`).
+    Marker(&'static [u8]),
+    /// The grid's first record starts at the first position whose id slot holds
+    /// an id (the product and technology tables begin with a header of varying
+    /// size).
+    FirstId,
+}
+
+/// One item table's record layout.
+#[derive(Debug, Clone, Copy)]
+pub struct TableLayout {
+    /// Table file name, for reports.
+    pub name: &'static str,
+    /// Offset of the declared record count in the header.
+    pub count_offset: usize,
+    /// Distance between records.
+    pub stride: usize,
+    /// Offset of the id within a record.
+    pub id_offset: usize,
+    /// Offset of the name key within a record, measured from the record origin.
+    ///
+    /// Fixed per table: the key sits at the same distance after the id in every
+    /// record, verified by the offset histogram of every resolved record (2,131
+    /// products at +0xA0, 82 substances at +0x6C, 392 technologies at +0xBC).
+    pub name_offset: usize,
+    /// How to find the first record.
+    pub base: GridBase,
+    /// Bytes between the marker and the record origin, for marker-based grids.
+    pub base_adjust: usize,
+}
+
+impl TableLayout {
+    /// Products: most inventory items.
+    pub const PRODUCTS: TableLayout = TableLayout {
+        name: "nms_reality_gcproducttable.mbin",
+        count_offset: 0x28,
+        stride: 768,
+        id_offset: 0xC0,
+        name_offset: 0x160,
+        // The pin marker sits 0x40 into the record, but it is a stable anchor:
+        // offsets below are measured from the marker, which is what the grid walk
+        // was verified against.
+        base: GridBase::Marker(b"UI_PIN_"),
+        base_adjust: 0,
+    };
+
+    /// Substances: the elements.
+    pub const SUBSTANCES: TableLayout = TableLayout {
+        name: "nms_reality_gcsubstancetable.mbin",
+        count_offset: 0x38,
+        stride: 416,
+        id_offset: 0x88,
+        name_offset: 0xF4,
+        base: GridBase::Marker(b"UI_GATHER"),
+        base_adjust: 0,
+    };
+
+    /// Technologies: installed tech.
+    pub const TECHNOLOGIES: TableLayout = TableLayout {
+        name: "nms_reality_gctechnologytable.mbin",
+        count_offset: 0x28,
+        stride: 736,
+        id_offset: 0x138,
+        name_offset: 0x1F4,
+        base: GridBase::FirstId,
+        base_adjust: 0,
+    };
+
+    /// Every table this crate understands.
+    pub const ALL: [TableLayout; 3] = [TableLayout::PRODUCTS, TableLayout::SUBSTANCES, TableLayout::TECHNOLOGIES];
+}
+
+/// What one table's extraction found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ItemExtraction {
+    /// Table file name.
+    pub table: String,
     /// `id -> name key`, in table order.
     pub pairs: Vec<(String, String)>,
-    /// Grid positions that held a usable id and name key.
+    /// Records the grid declared.
+    pub declared: usize,
+    /// Records whose id slot held an id.
     pub records: usize,
-    /// Grid positions skipped because the slots did not hold plausible text.
-    pub skipped: usize,
+    /// Records with an id but no name key that resolves in the text tables.
+    pub unresolved: usize,
 }
 
 impl ItemExtraction {
@@ -67,8 +140,7 @@ impl ItemExtraction {
     }
 }
 
-/// Read a NUL-terminated text slot, returning `None` when it does not look like
-/// a key or id (`A-Z`, `0-9`, `_`, at least two characters).
+/// Read a NUL-terminated text slot, if it looks like an id or key.
 fn read_slot(data: &[u8], offset: usize) -> Option<String> {
     let end = offset.checked_add(SLOT_SCAN)?.min(data.len());
     if offset >= end {
@@ -80,37 +152,64 @@ fn read_slot(data: &[u8], offset: usize) -> Option<String> {
     if text.len() < 2 || !text.iter().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_') {
         return None;
     }
-    Some(String::from_utf8_lossy(text).into_owned())
+    std::str::from_utf8(text).ok().map(str::to_string)
 }
 
-/// Extract `(id, name key)` pairs from the product table.
-pub fn extract_product_table(data: &[u8]) -> ItemExtraction {
-    let mut extraction = ItemExtraction::default();
+/// Read the name key for a record and accept it only if the text tables have it.
+///
+/// Requiring the key to resolve is what makes a wrong layout produce *fewer*
+/// names rather than wrong ones: a misaligned slot reads some other field, whose
+/// text is almost never a `*_NAME` key the game uses.
+fn choose_key(data: &[u8], key_offset: usize, strings: &BTreeMap<String, String>) -> Option<String> {
+    let key = read_slot(data, key_offset)?;
+    if !key.ends_with("_NAME") || !strings.contains_key(&key) {
+        return None;
+    }
+    Some(key)
+}
 
-    // The grid does not start at offset zero: the file header precedes it. The
-    // base is the first position within one stride whose id and name slots both
-    // hold plausible text, which is stable across builds because the header size
-    // is part of the record layout.
-    let Some(base) = (0..PRODUCT_STRIDE).find(|offset| {
-        offset + PRODUCT_NAME_OFFSET + SLOT_SCAN <= data.len()
-            && read_slot(data, offset + PRODUCT_ID_OFFSET).is_some()
-            && read_slot(data, offset + PRODUCT_NAME_OFFSET).is_some()
-    }) else {
+/// Extract `(id, name key)` pairs from one table.
+pub fn extract_table(data: &[u8], layout: &TableLayout, strings: &BTreeMap<String, String>) -> ItemExtraction {
+    let mut extraction = ItemExtraction { table: layout.name.to_string(), ..Default::default() };
+    if data.len() < layout.count_offset + 4 || data.len() < layout.stride {
+        return extraction;
+    }
+    let declared = u32::from_le_bytes(
+        data[layout.count_offset..layout.count_offset + 4].try_into().expect("checked length"),
+    ) as usize;
+    extraction.declared = declared;
+    if declared == 0 {
+        return extraction;
+    }
+
+    let Some(base) = grid_base(data, layout) else {
         return extraction;
     };
 
-    let mut position = base;
-    while position + PRODUCT_STRIDE <= data.len() {
-        match (read_slot(data, position + PRODUCT_ID_OFFSET), read_slot(data, position + PRODUCT_NAME_OFFSET)) {
-            (Some(id), Some(key)) => {
-                extraction.pairs.push((id, key));
-                extraction.records += 1;
-            }
-            _ => extraction.skipped += 1,
+    for index in 0..declared {
+        let record = base + index * layout.stride;
+        let Some(id) = read_slot(data, record + layout.id_offset) else {
+            continue;
+        };
+        extraction.records += 1;
+        match choose_key(data, record + layout.name_offset, strings) {
+            Some(key) => extraction.pairs.push((id, key)),
+            None => extraction.unresolved += 1,
         }
-        position += PRODUCT_STRIDE;
     }
     extraction
+}
+
+/// Locate the first record of a table's grid.
+fn grid_base(data: &[u8], layout: &TableLayout) -> Option<usize> {
+    match layout.base {
+        GridBase::Marker(marker) => {
+            let found = data.windows(marker.len()).position(|window| window == marker)?;
+            Some(found.checked_sub(layout.base_adjust)?)
+        }
+        GridBase::FirstId => (0..layout.stride)
+            .find(|offset| read_slot(data, offset + layout.id_offset).is_some()),
+    }
 }
 
 /// An item-name index: save id to display text.
@@ -162,40 +261,60 @@ pub fn is_id_shaped(id: &str) -> bool {
 /// The label used for a slot that holds a damaged or empty component.
 pub const PLACEHOLDER_LABEL: &str = "Damaged / empty component";
 
-/// Counts for the build report.
+/// Per-table counts for the build report.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ItemIndexReport {
-    /// Items named from the product table.
-    pub from_table: usize,
-    /// Items named by deriving `<id>_NAME`.
+    /// One line per table read.
+    pub tables: Vec<TableReport>,
+    /// Items named by deriving `<id>_NAME` from the text tables.
     pub derived: usize,
-    /// Table records whose key did not resolve.
+}
+
+/// What one table contributed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableReport {
+    /// Table file name.
+    pub table: String,
+    /// Records the header declared.
+    pub declared: usize,
+    /// Records whose id slot held an id.
+    pub records: usize,
+    /// Name keys that resolved in the text tables.
+    pub resolved: usize,
+    /// Records with no resolvable name key.
     pub unresolved: usize,
 }
 
 impl ItemIndex {
-    /// Build the index from the product table and the text tables.
+    /// Build the index from every extraction, plus a derivation pass over the
+    /// text tables for ids no table holds.
     ///
-    /// The table's own keys win over derived ones, because a table key is what
-    /// the game displays.
-    pub fn build(product_table: &[u8], strings: &BTreeMap<String, String>) -> ItemIndex {
-        let extraction = extract_product_table(product_table);
+    /// Table keys win over derived ones, because a table key is what the game
+    /// displays.
+    pub fn build(extractions: &[ItemExtraction], strings: &BTreeMap<String, String>) -> ItemIndex {
         let mut items = BTreeMap::new();
         let mut report = ItemIndexReport::default();
 
-        for (id, key) in &extraction.pairs {
-            match strings.get(key) {
-                Some(text) if !text.is_empty() => {
-                    items.insert(id.clone(), text.clone());
-                    report.from_table += 1;
+        for extraction in extractions {
+            let mut resolved = 0usize;
+            for (id, key) in &extraction.pairs {
+                match strings.get(key) {
+                    Some(text) if !text.is_empty() => {
+                        items.insert(id.clone(), text.clone());
+                        resolved += 1;
+                    }
+                    _ => {}
                 }
-                _ => report.unresolved += 1,
             }
+            report.tables.push(TableReport {
+                table: extraction.table.clone(),
+                declared: extraction.declared,
+                records: extraction.records,
+                resolved,
+                unresolved: extraction.records - resolved,
+            });
         }
 
-        // Every `<id>_NAME` key names an item whose id the save may use, which
-        // covers items the product grid does not hold (substances, technologies,
-        // and ids that only appear in other tables).
         for (key, text) in strings {
             let Some(id) = key.strip_suffix("_NAME") else { continue };
             if id.is_empty() || text.is_empty() || items.contains_key(id) {
@@ -218,13 +337,9 @@ impl ItemIndex {
         self.items.is_empty()
     }
 
-    /// Look up an id, accepting the save's `^` and `!` prefixes.
-    pub fn lookup(&self, id: &str) -> Option<(&str, NameSource)> {
-        let bare = id.trim_start_matches(['^', '!']);
-        if let Some(text) = self.items.get(bare) {
-            return Some((text.as_str(), NameSource::Table));
-        }
-        None
+    /// Look up an id against the index only.
+    pub fn lookup(&self, id: &str) -> Option<&str> {
+        self.items.get(id.trim_start_matches(['^', '!'])).map(String::as_str)
     }
 
     /// Look up an id, falling back to the text tables and then to the two
@@ -250,7 +365,8 @@ impl ItemIndex {
     }
 
     /// Look up an id against the text tables directly, for ids the index does
-    /// not hold: `<id>_NAME`, `UI_<id>_NAME`, then the id as a key.
+    /// not hold: `<id>_NAME`, `UI_<id>_NAME`, the trailing-number form, then the
+    /// id as a key.
     pub fn resolve_against<'a>(
         id: &str,
         strings: &'a BTreeMap<String, String>,
@@ -260,13 +376,17 @@ impl ItemIndex {
         // the substance `FUEL2` is named by `UI_FUEL_2_NAME`.
         let digits = bare.trim_end_matches(|c: char| c.is_ascii_digit());
         let number = &bare[digits.len()..];
-        let mut candidates = vec![
-            format!("{bare}_NAME"),
-            format!("UI_{bare}_NAME"),
-        ];
+        let mut candidates = vec![format!("{bare}_NAME"), format!("UI_{bare}_NAME")];
         if !number.is_empty() && !digits.is_empty() {
             candidates.push(format!("{digits}_{number}_NAME"));
             candidates.push(format!("UI_{digits}_{number}_NAME"));
+        }
+        // Base parts are named `BLD_<stem>_NAME` for the id `BASE_<stem>`, and
+        // save beacons are `BUILDBEACON` for `BLD_BEACON_NAME`.
+        let part_stem = bare.strip_prefix("BASE_").or_else(|| bare.strip_prefix("BUILD"));
+        if let Some(stem) = part_stem {
+            let stem = stem.strip_prefix('_').unwrap_or(stem);
+            candidates.push(format!("BLD_{stem}_NAME"));
         }
         for candidate in candidates {
             if let Some(text) = strings.get(&candidate) {
@@ -275,6 +395,25 @@ impl ItemIndex {
                 }
             }
         }
+
+        // A few save ids truncate the stem (`BASE_BUBBLECLUS` for
+        // `BLD_BUBBLECLUSTER_NAME`), so fall back to the shortest base-part key
+        // the id is a prefix of. Only base parts pay for this scan.
+        if let Some(stem) = part_stem {
+            let prefix = format!("BLD_{}", stem.strip_prefix('_').unwrap_or(stem));
+            let mut best: Option<(&String, &String)> = None;
+            for (key, text) in strings {
+                if !text.is_empty() && key.starts_with(&prefix) && key.ends_with("_NAME") {
+                    if best.is_none_or(|(current, _)| key.len() < current.len()) {
+                        best = Some((key, text));
+                    }
+                }
+            }
+            if let Some((_, text)) = best {
+                return Some((text.as_str(), NameSource::Derived));
+            }
+        }
+
         strings
             .get(bare)
             .filter(|text| !text.is_empty())
@@ -291,125 +430,183 @@ impl ItemIndex {
 mod tests {
     use super::*;
 
-    /// Build a product table in the real layout: header, then a grid of records.
-    fn synthetic_product_table(records: &[(&str, &str)]) -> Vec<u8> {
-        let header = 0x80;
-        let mut data = vec![0u8; header + records.len() * PRODUCT_STRIDE];
-        data[0..8].copy_from_slice(&0xCCCC_CCCC_CCCC_CCCCu64.to_le_bytes());
-        for (index, (id, key)) in records.iter().enumerate() {
-            let base = header + index * PRODUCT_STRIDE;
-            data[base + 0x00..base + 0x00 + 12].copy_from_slice(b"UI_CRAFT_OBJ");
-            data[base + PRODUCT_ID_OFFSET..base + PRODUCT_ID_OFFSET + id.len()].copy_from_slice(id.as_bytes());
-            data[base + PRODUCT_NAME_OFFSET..base + PRODUCT_NAME_OFFSET + key.len()].copy_from_slice(key.as_bytes());
-        }
-        data
-    }
-
     fn strings(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    /// Build a table in the real shape: header with a count, then a grid of
+    /// records with a text slot per field.
+    fn synthetic_table(layout: &TableLayout, base: usize, ids: &[&str], keys: &[&str]) -> Vec<u8> {
+        let mut data = vec![0u8; base + ids.len() * layout.stride];
+        data[0..8].copy_from_slice(&0xCCCC_CCCC_CCCC_CCCCu64.to_le_bytes());
+        data[layout.count_offset..layout.count_offset + 4].copy_from_slice(&(ids.len() as u32).to_le_bytes());
+        if let GridBase::Marker(marker) = layout.base {
+            let marker_at = base + layout.base_adjust;
+            data[marker_at..marker_at + marker.len()].copy_from_slice(marker);
+        }
+        for (index, (id, key)) in ids.iter().zip(keys).enumerate() {
+            let record = base + index * layout.stride;
+            data[record + layout.id_offset..record + layout.id_offset + id.len()].copy_from_slice(id.as_bytes());
+            // The name key sits some distance after the id, preceded by a float
+            // whose last byte looks like a letter — the case that used to produce
+            // keys like APROTECT_NAME.
+            let key_offset = record + layout.name_offset;
+            data[key_offset - 4..key_offset].copy_from_slice(&10.0f32.to_le_bytes());
+            data[key_offset..key_offset + key.len()].copy_from_slice(key.as_bytes());
+        }
+        data
+    }
+
     #[test]
-    fn extracts_pairs_on_the_record_grid() {
-        let table = synthetic_product_table(&[
-            ("CASING", "CASING_NAME"),
-            ("ANTIMATTER", "COMMODITY6_NAME"),
-            ("CARBON_SEAL", "CARBON_SEAL_NAME"),
-        ]);
-        let extraction = extract_product_table(&table);
-        assert_eq!(extraction.pairs.len(), 3, "{:?}", extraction.pairs);
+    fn extracts_products_on_the_record_grid() {
+        let layout = TableLayout::PRODUCTS;
+        let data = synthetic_table(&layout, 0x80, &["CASING", "ANTIMATTER"], &["CASING_NAME", "COMMODITY6_NAME"]);
+        let text = strings(&[("CASING_NAME", "METAL PLATING"), ("COMMODITY6_NAME", "ANTIMATTER")]);
+        let extraction = extract_table(&data, &layout, &text);
+
+        assert_eq!(extraction.declared, 2);
+        assert_eq!(extraction.records, 2);
         assert_eq!(extraction.pairs[0], ("CASING".into(), "CASING_NAME".into()));
+        // A key that is not derived from the id is still found, because it is the
+        // one that resolves.
         assert_eq!(extraction.pairs[1], ("ANTIMATTER".into(), "COMMODITY6_NAME".into()));
+        assert_eq!(extraction.resolution_percent(&text), 100);
     }
 
     #[test]
-    fn skips_positions_whose_slots_are_empty_or_padding() {
-        let mut table = synthetic_product_table(&[("A_ITEM", "A_ITEM_NAME")]);
-        // A second record with an empty id slot is skipped, not misread.
-        table.resize(table.len() + PRODUCT_STRIDE, 0);
-        let extraction = extract_product_table(&table);
+    fn extracts_substances_from_the_marker_grid() {
+        let layout = TableLayout::SUBSTANCES;
+        let data = synthetic_table(&layout, 0x80, &["FUEL1", "OXYGEN"], &["UI_FUEL_1_NAME", "UI_AIR1_NAME"]);
+        let text = strings(&[("UI_FUEL_1_NAME", "CARBON"), ("UI_AIR1_NAME", "OXYGEN")]);
+        let extraction = extract_table(&data, &layout, &text);
+        assert_eq!(extraction.records, 2);
+        assert_eq!(extraction.pairs[1], ("OXYGEN".into(), "UI_AIR1_NAME".into()));
+    }
+
+    #[test]
+    fn ignores_a_key_that_does_not_resolve() {
+        // The record's only candidate is a key the text tables do not have, so
+        // the record is counted as unresolved instead of inventing a name.
+        let layout = TableLayout::TECHNOLOGIES;
+        // The key shape is right but the text tables do not have it, so the
+        // record must count as unresolved rather than inventing a name.
+        let data = synthetic_table(&layout, 0x40, &["GHOST_TECH"], &["GHOST_TECH_NAME"]);
+        let extraction = extract_table(&data, &layout, &strings(&[]));
         assert_eq!(extraction.records, 1);
-        assert_eq!(extraction.skipped, 1);
+        assert_eq!(extraction.unresolved, 1);
+        assert!(extraction.pairs.is_empty());
     }
 
     #[test]
-    fn joins_table_keys_with_text_and_derives_the_rest() {
-        let table = synthetic_product_table(&[("CASING", "CASING_NAME"), ("ANTIMATTER", "COMMODITY6_NAME")]);
-        let strings = strings(&[
+    fn a_stray_leading_byte_does_not_hide_a_key() {
+        // The float before the key ends in 'A', so the raw scan sees
+        // "APROTECT_NAME"; the real key must still be found.
+        let layout = TableLayout::TECHNOLOGIES;
+        let mut data = synthetic_table(&layout, 0x40, &["PROTECT"], &["PROTECT_NAME"]);
+        let key_offset = 0x40 + layout.name_offset;
+        data[key_offset - 1] = b'A';
+        let text = strings(&[("PROTECT_NAME", "HAZARD PROTECTION")]);
+        let extraction = extract_table(&data, &layout, &text);
+        assert_eq!(extraction.pairs, vec![("PROTECT".to_string(), "PROTECT_NAME".to_string())]);
+    }
+
+    #[test]
+    fn stops_at_the_declared_count() {
+        // Trailing data after the declared records must not be read as items.
+        let layout = TableLayout::PRODUCTS;
+        let mut data = synthetic_table(&layout, 0x80, &["A_ITEM"], &["A_ITEM_NAME"]);
+        data.resize(data.len() + layout.stride, 0);
+        data[layout.count_offset..layout.count_offset + 4].copy_from_slice(&1u32.to_le_bytes());
+        let trailing = data.len() - layout.stride + layout.id_offset;
+        data[trailing..trailing + 6].copy_from_slice(b"TRAIL\x00");
+        let extraction = extract_table(&data, &layout, &strings(&[("A_ITEM_NAME", "An item"), ("TRAIL_NAME", "Nope")]));
+        assert_eq!(extraction.records, 1);
+    }
+
+    #[test]
+    fn joins_tables_with_text_and_derives_the_rest() {
+        let layout = TableLayout::PRODUCTS;
+        let data = synthetic_table(&layout, 0x80, &["CASING"], &["CASING_NAME"]);
+        let text = strings(&[
             ("CASING_NAME", "METAL PLATING"),
-            ("COMMODITY6_NAME", "ANTIMATTER"),
             ("FUEL2_NAME", "CONDENSED CARBON"),
-            ("UI_UNUSED_NAME", ""),
+            ("UI_EMPTY_NAME", ""),
         ]);
-        let index = ItemIndex::build(&table, &strings);
+        let extraction = extract_table(&data, &layout, &text);
+        let index = ItemIndex::build(&[extraction], &text);
 
-        assert_eq!(index.lookup("CASING"), Some(("METAL PLATING", NameSource::Table)));
-        // The save writes ids with a type prefix.
-        assert_eq!(index.lookup("^CASING"), Some(("METAL PLATING", NameSource::Table)));
-        assert_eq!(index.lookup("ANTIMATTER").map(|(t, _)| t), Some("ANTIMATTER"));
-        // An item the grid does not hold is still named by derivation.
-        assert_eq!(index.lookup("FUEL2").map(|(t, _)| t), Some("CONDENSED CARBON"));
+        assert_eq!(index.lookup("CASING"), Some("METAL PLATING"));
+        assert_eq!(index.lookup("^CASING"), Some("METAL PLATING"));
+        assert_eq!(index.lookup("FUEL2"), Some("CONDENSED CARBON"));
         assert_eq!(index.lookup("MISSING"), None);
-        assert_eq!(index.report.from_table, 2);
-        assert!(index.report.derived >= 1);
-    }
-
-    #[test]
-    fn reports_unresolved_table_keys_instead_of_inventing_names() {
-        let table = synthetic_product_table(&[("GHOST", "GHOST_NAME")]);
-        let index = ItemIndex::build(&table, &strings(&[]));
-        assert!(index.is_empty());
-        assert_eq!(index.report.unresolved, 1);
-    }
-
-    #[test]
-    fn falls_back_to_direct_key_lookups() {
-        let strings = strings(&[("ACCESS3_NAME", "ATLASPASS v3"), ("UI_SEASON_23_NAME", "Season 23")]);
-        assert_eq!(
-            ItemIndex::resolve_against("^ACCESS3", &strings),
-            Some(("ATLASPASS v3", NameSource::Derived))
-        );
-        assert_eq!(
-            ItemIndex::resolve_against("UI_SEASON_23_NAME", &strings),
-            Some(("Season 23", NameSource::Direct))
-        );
+        assert_eq!(index.report.tables[0].resolved, 1);
+        assert_eq!(index.report.derived, 1);
     }
 
     #[test]
     fn labels_placeholders_and_custom_names() {
-        let strings = strings(&[("CASING_NAME", "METAL PLATING"), ("UI_FUEL_2_NAME", "CONDENSED CARBON")]);
-        let index = ItemIndex::build(&[], &strings);
+        let text = strings(&[("CASING_NAME", "METAL PLATING"), ("UI_FUEL_2_NAME", "CONDENSED CARBON")]);
+        let index = ItemIndex::build(&[], &text);
 
         assert_eq!(
-            index.resolve("^MAINT_REFINER", &strings),
+            index.resolve("^MAINT_REFINER", &text),
             Some((PLACEHOLDER_LABEL.to_string(), NameSource::Placeholder))
         );
         // A generated name is shown as-is, because that is what the game shows.
         assert_eq!(
-            index.resolve("^J\u{00C4}#00000", &strings),
-            Some(("J\u{00C4}#00000".to_string(), NameSource::Custom))
+            index.resolve("^J\\u{00C4}#00000", &text),
+            Some(("J\\u{00C4}#00000".to_string(), NameSource::Custom))
         );
-        // CASING_NAME is folded into the index by derivation, so it is a table hit;
-        // FUEL2 has no FUEL2_NAME key and is found by the trailing-number rule.
         assert_eq!(
-            index.resolve("^CASING", &strings),
+            index.resolve("^CASING", &text),
             Some(("METAL PLATING".to_string(), NameSource::Table))
         );
         assert_eq!(
-            index.resolve("FUEL2", &strings),
+            index.resolve("FUEL2", &text),
             Some(("CONDENSED CARBON".to_string(), NameSource::Derived))
         );
-        assert_eq!(index.resolve("^NOTHING_HERE", &strings), None);
+        assert_eq!(index.resolve("^NOTHING_HERE", &text), None);
     }
 
     #[test]
     fn finds_keys_that_separate_a_trailing_number() {
-        // The substance FUEL2 is named by UI_FUEL_2_NAME, not FUEL2_NAME.
-        let strings = strings(&[("UI_FUEL_2_NAME", "CONDENSED CARBON")]);
+        let text = strings(&[("UI_FUEL_2_NAME", "CONDENSED CARBON")]);
         assert_eq!(
-            ItemIndex::resolve_against("FUEL2", &strings),
+            ItemIndex::resolve_against("FUEL2", &text),
             Some(("CONDENSED CARBON", NameSource::Derived))
         );
-        assert_eq!(ItemIndex::resolve_against("FUEL", &strings), None);
+        assert_eq!(ItemIndex::resolve_against("FUEL", &text), None);
+    }
+
+    #[test]
+    fn names_base_parts_by_their_bld_convention() {
+        let text = strings(&[
+            ("BLD_BONEGARDEN_NAME", "RATTLE SPINE"),
+            ("BLD_BEACON_NAME", "SAVE BEACON"),
+            ("BLD_BUBBLECLUSTER_NAME", "BUBBLE CLUSTER"),
+        ]);
+        assert_eq!(
+            ItemIndex::resolve_against("^BASE_BONEGARDEN", &text),
+            Some(("RATTLE SPINE", NameSource::Derived))
+        );
+        assert_eq!(
+            ItemIndex::resolve_against("^BUILDBEACON", &text),
+            Some(("SAVE BEACON", NameSource::Derived))
+        );
+        // The save's id is a truncated stem; the shortest matching key wins.
+        assert_eq!(
+            ItemIndex::resolve_against("^BASE_BUBBLECLUS", &text),
+            Some(("BUBBLE CLUSTER", NameSource::Derived))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_direct_key_lookups() {
+        let text = strings(&[("ACCESS3_NAME", "ATLASPASS v3"), ("UI_SEASON_23_NAME", "Season 23")]);
+        assert_eq!(ItemIndex::resolve_against("^ACCESS3", &text), Some(("ATLASPASS v3", NameSource::Derived)));
+        assert_eq!(
+            ItemIndex::resolve_against("UI_SEASON_23_NAME", &text),
+            Some(("Season 23", NameSource::Direct))
+        );
     }
 }

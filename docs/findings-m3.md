@@ -51,29 +51,35 @@ matches its text. The entry table and the blob are separate regions, so agreemen
 between them is evidence rather than coincidence — a wrong stride or count cannot
 satisfy both.
 
-## Item names: a join, not a lookup
+## Item names: three tables, fixed offsets, and locate-rules
 
 The save stores ids (`^CARBON_SEAL`, `^FUEL2`, `^MAINT_REFINER`) and the text
 tables do not name them. Names come from joining the item table's key with the
 text table:
 
-* the product table is a **768-byte grid** (id at +0xC0, name key at +0x160), and
-  walking it yields 2,261 records whose keys resolve 96% of the time — that rate
-  is the self-check;
-* the key **cannot be derived** from the id: `ANTIMATTER` is named by
-  `COMMODITY6_NAME`, `BIOSHIP_COMP5_0` by `UI_BIOSHIP_COMP5_NAME0`, and `FUEL2`
-  by `UI_FUEL_2_NAME`;
-* several id namespaces coexist — the save's `OXYGEN` is the table's `AIR1`.
+* the key sits at a **fixed offset** in every record of every table (products
+  +0xA0 after the id, substances +0x6C, technologies +0xBC), verified across
+  2,131 + 82 + 392 resolved records — the "variable offset" a naive scan sees is
+  an artifact of the bytes before the key (a float ending in `'A'`）；
+* record counts are declared in the header, so a walk stops at the end of the
+  item array instead of reading whatever follows as items;
+* a key is accepted **only if the text tables have it**, so a wrong layout yields
+  fewer names rather than wrong ones;
+* a handful of conventions cover the rest: `BLD_<stem>_NAME` for base parts
+  (including truncated stems like `BASE_BUBBLECLUS` → `BLD_BUBBLECLUSTER_NAME`),
+  a separated trailing number (`FUEL2` → `UI_FUEL_2_NAME`), and the id itself as
+  a key.
 
-Of the 1,108 distinct item ids in a real save, **866 (78%) now produce text**,
-each labelled with its source (table join 282, derived key 80, custom name 425,
-placeholder 66, direct key 2). Nothing is guessed: unresolved ids are reported as
-such.
+Of the 1,108 distinct item ids in a real save, **954 (86%) now produce text**,
+each labelled with its source (item table 484, custom name 426, placeholder 19,
+derived key 15). Nothing is guessed: unresolved ids are reported as such.
 
 ## Still open
 
-* **Substance and technology tables** — different layouts (technology stride 736,
-  name key at id+0xBB) to close the remaining ~240 ids.
+* **164 ids remain**, all procedural or ingredient ids (`B_ALK_A`, `B_COK_C1`,
+  `BUILD_REFINER1`). The next candidate tables are `proceduralproducttable.mbin`,
+  `consumableitemtable.mbin`, `nms_reality_gcrecipetable.mbin` and
+  `basebuildingcoststable.mbin`, all in `NMSARC.Precache.pak`.
 * **Metadata archives reference a second data region.** 2,614 of 50,805 entries
   in `NMSARC.MetadataEtc.pak` point past the chunk region; reads of those fail
   with a clear error. Nothing in the data pack lives there.

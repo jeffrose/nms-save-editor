@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::install::Install;
-use crate::items::ItemIndex;
+use crate::items::{ItemIndex, TableLayout, extract_table};
 use crate::{DataError, language};
 
 /// Pack format version. Bump when the layout changes incompatibly.
@@ -25,7 +25,7 @@ pub struct BuildReport {
     /// archive has no text in it, so failing to read one is not fatal: the pack
     /// is built from what could be read.
     pub skipped: Vec<String>,
-    /// How the item index was built.
+    /// How the item index was built, one entry per table.
     pub items: crate::items::ItemIndexReport,
 }
 
@@ -134,10 +134,16 @@ impl DataPack {
             return Err(DataError::NoTables { language: language_code.to_string() });
         }
 
-        // Item names: the product table's own keys, joined with the text, plus
-        // every `<id>_NAME` key for the ids other tables hold.
-        let product_table = read_item_table(install, "nms_reality_gcproducttable.mbin", &mut report);
-        let index = ItemIndex::build(product_table.as_deref().unwrap_or(&[]), &strings);
+        // Item names: each item table's own keys, joined with the text, plus
+        // every `<id>_NAME` key for the ids no table holds.
+        let extractions: Vec<_> = TableLayout::ALL
+            .iter()
+            .filter_map(|layout| {
+                let table = read_item_table(install, layout.name, &mut report)?;
+                Some(extract_table(&table, layout, &strings))
+            })
+            .collect();
+        let index = ItemIndex::build(&extractions, &strings);
         report.items = index.report.clone();
 
         let pack = DataPack {

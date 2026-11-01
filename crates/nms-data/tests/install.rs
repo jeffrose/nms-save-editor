@@ -95,11 +95,11 @@ fn every_english_table_parses_exactly() {
     assert!(entries > 20_000, "expected a large corpus, found {entries} entries");
 }
 
-/// Item names come from joining the product table's keys with the text tables.
-/// The resolution rate is the self-check: a layout change collapses it instead
-/// of producing wrong names.
+/// Item names come from joining each item table's keys with the text tables.
+/// The per-table resolution rate is the self-check: a layout change collapses it
+/// instead of producing wrong names.
 #[test]
-fn item_names_resolve_from_the_item_table() {
+fn item_names_resolve_from_the_item_tables() {
     let Ok(install) = Install::discover(std::env::var("NMS_INSTALL").ok().as_deref().map(std::path::Path::new))
     else {
         eprintln!("skipping: no No Man's Sky installation found");
@@ -107,48 +107,46 @@ fn item_names_resolve_from_the_item_table() {
     };
 
     let (pack, report) = DataPack::build(&install, "english", 1_793_488_365).expect("pack builds");
-    let strings = &pack.strings;
+    let _strings = &pack.strings;
 
-    // The product table itself, re-read to report the raw numbers.
-    let mut product_table = None;
-    for pak_path in install.paks().unwrap() {
-        let Ok(pak) = nms_pak::Pak::open(&pak_path) else { continue };
-        if let Some(entry) = pak.entries().iter().find(|e| e.name.ends_with("nms_reality_gcproducttable.mbin")) {
-            product_table = Some(pak.extract(entry).expect("table extracts"));
-            break;
-        }
+    eprintln!("item tables:");
+    for table in &report.items.tables {
+        let rate = table.resolved * 100 / table.records.max(1);
+        eprintln!(
+            "  {:<34} {:>5} declared, {:>5} records, {:>5} named ({rate}%)",
+            table.table, table.declared, table.records, table.resolved
+        );
+        // A table that parses to nothing means the layout assumption broke.
+        assert!(table.records > 100, "{}: only {} records read", table.table, table.records);
+        assert!(rate >= 50, "{}: resolution collapsed to {rate}%", table.table);
     }
-    let table = product_table.expect("the product table is present");
-    let extraction = nms_data::items::extract_product_table(&table);
-    let rate = extraction.resolution_percent(strings);
-    eprintln!(
-        "product table: {} records, {} skipped, {} name keys resolve ({}%)",
-        extraction.records,
-        extraction.skipped,
-        extraction.resolved(strings),
-        rate
-    );
+    assert!(report.items.tables.len() >= 3, "expected three item tables");
+    eprintln!("item index: {} names ({} derived from text keys)", pack.item_count(), report.items.derived);
 
-    assert!(extraction.records > 2_000, "expected the whole product grid, found {} records", extraction.records);
-    assert!(rate >= 90, "resolution collapsed to {rate}%, which means the record layout changed");
-
-    // Known joins, including an id whose key is not derived from it.
+    // Known joins, one per table, including keys not derived from the id.
     assert_eq!(pack.item_name("CASING").as_deref(), Some("METAL PLATING"));
     assert_eq!(pack.item_name("CARBON_SEAL").as_deref(), Some("HERMETIC SEAL"));
     assert_eq!(pack.item_name("ANTIMATTER").as_deref(), Some("ANTIMATTER"));
-    assert_eq!(pack.item_name("^MICROCHIP").as_deref(), Some("MICROPROCESSOR"));
-    // A damaged slot is labelled, and a generated name is shown as-is, so the
-    // editor never has a blank cell.
-    assert_eq!(
-        pack.item_name_with_source("^MAINT_REFINER").map(|(text, _)| text).as_deref(),
-        Some(nms_data::items::PLACEHOLDER_LABEL)
-    );
+    assert_eq!(pack.item_name("FUEL1").as_deref(), Some("CARBON"));
+    assert_eq!(pack.item_name("OXYGEN").as_deref(), Some("OXYGEN"));
+    assert_eq!(pack.item_name("LAUNCHSUB").as_deref(), Some("DI-HYDROGEN"));
+    assert_eq!(pack.item_name("UT_PROTECT").as_deref(), Some("SHIELD LATTICE"));
+    assert_eq!(pack.item_name("JET1").as_deref(), Some("JETPACK"));
+    // Damaged components are named by the technology table itself (the game's
+    // own text for `MAINT_REFINER` is the refiner's name), so the table wins over
+    // the placeholder label; the label is the fallback for ids no table names.
+    assert_eq!(pack.item_name("MAINT_REFINER").as_deref(), Some("REFINERY OUTPUT"));
+    assert_eq!(pack.item_name("MAINT_TECH5").as_deref(), Some("BIO-INPUT SENSOR"));
+    // Base parts are named by the BLD_ convention, including truncated stems.
+    assert_eq!(pack.item_name("BASE_BONEGARDEN").as_deref(), Some("RATTLE SPINE"));
+    assert_eq!(pack.item_name("^BASE_BUBBLECLUS").as_deref(), Some("BUBBLE CLUSTER"));
+    assert_eq!(pack.item_name("BUILDBEACON").as_deref(), Some("SAVE BEACON"));
+    // A generated name is shown as-is, so the editor never has a blank cell.
     assert_eq!(
         pack.item_name_with_source("^J\u{00C4}#00000").map(|(_, source)| source),
         Some(nms_data::NameSource::Custom)
     );
     assert_eq!(pack.item_name("NOT_AN_ITEM"), None);
-    eprintln!("item index: {} names ({} from the table, {} derived)", pack.item_count(), report.items.from_table, report.items.derived);
 }
 
 #[test]

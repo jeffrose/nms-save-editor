@@ -733,15 +733,20 @@ fn cmd_data_refresh(args: &[String]) -> Result<(), String> {
     pack.save(&out).map_err(|e| e.to_string())?;
     let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
     println!();
+    for table in &report.items.tables {
+        println!(
+            "  {:<34} {:>5} records, {:>5} named ({:>3}%)",
+            table.table,
+            table.records,
+            table.resolved,
+            table.resolved * 100 / table.records.max(1)
+        );
+    }
     println!(
-        "items           {} named ({} from the item table, {} derived)",
+        "items           {} named ({} derived from text keys)",
         pack.item_count(),
-        report.items.from_table,
         report.items.derived
     );
-    if report.items.unresolved > 0 {
-        println!("                {} table keys did not resolve", report.items.unresolved);
-    }
     println!("wrote {} strings ({language}) to {}", pack.len(), out.display());
     println!("pack size       {size} bytes");
     println!("nothing from the game is redistributed: the pack is built from your own install and stays here");
