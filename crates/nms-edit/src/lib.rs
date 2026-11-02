@@ -16,13 +16,16 @@
 
 pub mod backup;
 pub mod bundle;
+pub mod player;
 pub mod safety;
 
 pub use backup::{BackupEntry, BackupError, BackupStore, format_timestamp};
-pub use safety::{LiveLocation, LiveWrite, SANDBOX_MARKER, check_write, is_sandboxed, live_save_location, mark_sandbox};
-pub use bundle::{
-    ChangeSummary, CommitOptions, CommitReport, MetadataPlan, SaveBundle, WritePlan, now_unix,
+pub use bundle::{ChangeSummary, CommitOptions, CommitReport, MetadataPlan, SaveBundle, WritePlan, now_unix};
+pub use player::{
+    Cell, Currencies, Currency, Inventory, InventoryPath, InventoryRole, ItemKind, ItemSlot, KnownList, NewItem,
+    PlayerError, StackSize, StackSizeSource, normalize_id,
 };
+pub use safety::{LiveLocation, LiveWrite, SANDBOX_MARKER, check_write, is_sandboxed, live_save_location, mark_sandbox};
 
 /// Anything that can go wrong while editing a save.
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +59,11 @@ pub enum EditError {
     /// Backups.
     #[error(transparent)]
     Backup(Box<BackupError>),
+
+    /// A player-state edit that cannot be carried out (unknown inventory, full
+    /// grid, illegal amount, …).
+    #[error(transparent)]
+    Player(#[from] PlayerError),
 
     /// A write was aimed at a live, cloud-synced save location without
     /// confirmation.

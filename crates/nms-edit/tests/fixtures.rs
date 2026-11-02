@@ -303,3 +303,413 @@ fn commit_refuses_a_live_save_folder() {
 
     let _ = std::fs::remove_dir_all(&fake);
 }
+
+// ---------------------------------------------------------------------------
+// M4: player state — currencies, inventories, known items
+// ---------------------------------------------------------------------------
+
+/// The mapping the CLI would load: the built-in summary keys plus the
+/// community mapping from the usual config location or `NMSEDIT_MAPPING`.
+///
+/// Inventory fields are not in the built-in map, so these tests cannot run
+/// without it; like the fixtures themselves, they skip instead of failing.
+fn full_keys() -> Option<KeyMap> {
+    let path = std::env::var("NMSEDIT_MAPPING")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let base = match std::env::var("XDG_CONFIG_HOME") {
+                Ok(value) if !value.is_empty() => PathBuf::from(value),
+                _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
+            };
+            Some(base.join("nmsedit").join("mapping.json"))
+        })?;
+    let loaded = KeyMap::load(&path).ok()?;
+    Some(KeyMap::builtin().extended_with(&loaded))
+}
+
+/// Count the slot entries the file itself contains, independently of the
+/// reader, so a slot that fails to parse cannot silently disappear.
+fn raw_slot_count(value: &Value, keys: &KeyMap) -> usize {    fn member<'a>(value: &'a Value, keys: &KeyMap, name: &str) -> Option<&'a Value> {
+        let object = value.as_object()?;
+        keys.candidates(name).find_map(|candidate| object.get(candidate))
+    }
+    let is_inventory = ["Slots", "ValidSlotIndices", "Width", "Height"]
+        .iter()
+        .all(|name| member(value, keys, name).is_some());
+    if is_inventory {
+        return member(value, keys, "Slots").and_then(Value::as_array).map_or(0, Vec::len);
+    }
+    match value {
+        Value::Object(map) => map.values().map(|child| raw_slot_count(child, keys)).sum(),
+        Value::Array(items) => items.iter().map(|child| raw_slot_count(child, keys)).sum(),
+        _ => 0,
+    }
+}
+
+#[test]
+fn every_inventory_obeys_the_games_own_rules() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures (run tools/fetch-fixtures.sh)");
+        return;
+    };
+    let Some(keys) = full_keys() else {
+        eprintln!("skipping: no community mapping (set NMSEDIT_MAPPING or install ~/.config/nmsedit/mapping.json)");
+        return;
+    };
+
+    let mut saves = 0usize;
+    let mut containers = 0usize;
+    let mut slots = 0usize;
+    let mut kinds = std::collections::BTreeMap::new();
+    let mut auxiliary_over_max = 0usize;
+
+    for slot in player_slots(&dir) {
+        let bundle = SaveBundle::load(&dir.join(slot.data_file_name()), keys.clone())
+            .unwrap_or_else(|e| panic!("{slot}: {e}"));
+        let inventories = bundle.inventories();
+        assert!(!inventories.is_empty(), "{slot}: no inventories found");
+
+        // The reader walks the active player-state context; the oracle must
+        // walk exactly the same subtree (CommonStateData also carries season
+        // inventories, which are not player-state inventories).
+        let context = bundle.player_context().expect("a player context");
+        let root = bundle.document.tree().as_object().expect("object root");
+        let context_key = keys
+            .candidates(context)
+            .find(|candidate| root.contains_key(*candidate))
+            .unwrap_or(context);
+        let raw = raw_slot_count(&root[context_key], &keys);
+        let parsed: usize = inventories.iter().map(|inventory| inventory.slots.len()).sum();
+        assert_eq!(parsed, raw, "{slot}: {} slots could not be read", raw - parsed);
+
+        for inventory in &inventories {
+            containers += 1;
+            assert!(inventory.width * inventory.height > 0 || inventory.slots.is_empty(), "{slot}: {}", inventory.path);
+            let valid: std::collections::HashSet<_> = inventory.valid_cells.iter().copied().collect();
+            let mut occupied = std::collections::HashSet::new();
+            for item in &inventory.slots {
+                slots += 1;
+                *kinds.entry(item.kind).or_insert(0usize) += 1;
+                assert!(item.id.starts_with('^'), "{slot}: {} id {:?}", inventory.path, item.id);
+                assert!(item.amount >= -1, "{slot}: {} has amount {}", inventory.path, item.amount);
+                if inventory.role == nms_edit::InventoryRole::Player {
+                    assert!(
+                        item.amount <= item.max_amount,
+                        "{slot}: {} {} holds {} of a {}-stack",
+                        inventory.path,
+                        item.id,
+                        item.amount,
+                        item.max_amount
+                    );
+                } else if item.amount > item.max_amount {
+                    // In maintenance containers `Amount` is a repair-ingredient
+                    // quantity, not a stack count, so it may exceed `MaxAmount`.
+                    auxiliary_over_max += 1;
+                }
+                assert!(
+                    item.cell.x < inventory.width && item.cell.y < inventory.height,
+                    "{slot}: {} slot at {} is outside {}x{}",
+                    inventory.path,
+                    item.cell,
+                    inventory.width,
+                    inventory.height
+                );
+                assert!(
+                    occupied.insert(item.cell),
+                    "{slot}: {} holds two items at {}",
+                    inventory.path,
+                    item.cell
+                );
+                assert!(
+                    valid.contains(&item.cell),
+                    "{slot}: {} slot at {} is not in ValidSlotIndices",
+                    inventory.path,
+                    item.cell
+                );
+            }
+        }
+        saves += 1;
+    }
+
+    eprintln!(
+        "checked {slots} slots in {containers} inventories across {saves} saves: {:?} ({auxiliary_over_max} auxiliary slots above MaxAmount)",
+        kinds
+    );
+    // The real fixture set is 30 saves with 52,874 containers and 58,429
+    // slots; the floor keeps the test meaningful if fixtures are trimmed.
+    assert!(saves >= 5, "expected several saves, found {saves}");
+    assert!(containers > 1_000, "expected thousands of containers, found {containers}");
+    assert!(slots > 10_000, "expected tens of thousands of slots, found {slots}");
+}
+
+#[test]
+fn currency_edits_commit_and_round_trip() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures");
+        return;
+    };
+    let Some(keys) = full_keys() else {
+        eprintln!("skipping: no community mapping");
+        return;
+    };
+    let slot = Slot::player_state(1);
+    let scratch = scratch_copy(&dir, slot, "m4-currency");
+    let data_path = scratch.join(slot.data_file_name());
+
+    let mut bundle = SaveBundle::load(&data_path, keys.clone()).unwrap();
+    let before = bundle.currencies().expect("player currencies");
+    let quicksilver = if before.quicksilver == 4242 { 4243 } else { 4242 };
+    // One fixture save is already at the unit cap, which the game writes as
+    // `-1`; pick a value that is certainly different.
+    let units = if before.units == u32::MAX { u32::MAX - 1 } else { u32::MAX };
+
+    assert!(bundle.set_currency(nms_edit::Currency::Units, units).expect("set units"));
+    assert!(bundle
+        .set_currency(nms_edit::Currency::Quicksilver, quicksilver)
+        .expect("set quicksilver"));
+
+    // The cap is written as the signed integer the game itself wrote.
+    let units_path = format!("{}.PlayerStateData.Units", bundle.player_context().unwrap());
+    let expected = if units == u32::MAX { -1 } else { i64::from(units as i32) };
+    assert_eq!(bundle.get(&units_path).unwrap().as_i64(), Some(expected), "balances use the game's signed form");
+
+    let plan = bundle.plan(1_793_488_365).unwrap();
+    let changed: Vec<&str> = plan.changes.fields_changed.iter().map(|field| field.path.as_str()).collect();
+    assert!(
+        changed.iter().any(|path| path.ends_with(".Units")),
+        "units must be reported as changed: {changed:?}"
+    );
+    assert!(
+        changed.iter().any(|path| path.ends_with(".Specials")),
+        "quicksilver must be reported as changed: {changed:?}"
+    );
+
+    let report = bundle
+        .commit(&CommitOptions {
+            backup_root: Some(scratch.join("backups")),
+            keep_backups: 3,
+            timestamp: Some(1_793_488_365),
+            dry_run: false,
+            confirm_live: false,
+        })
+        .unwrap();
+    assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
+    assert!(report.warnings.is_empty(), "unexpected warnings: {:?}", report.warnings);
+
+    let reloaded = SaveBundle::load(&data_path, keys).unwrap();
+    let after = reloaded.currencies().expect("currencies after reload");
+    assert_eq!(after.units, units, "the balance must survive a round trip");
+    assert_eq!(after.quicksilver, quicksilver);
+    assert_eq!(after.nanites, before.nanites, "untouched balances must not move");
+
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+#[test]
+fn item_edits_commit_and_reload() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures");
+        return;
+    };
+    let Some(keys) = full_keys() else {
+        eprintln!("skipping: no community mapping");
+        return;
+    };
+    let slot = Slot::player_state(13);
+    if !dir.join(slot.data_file_name()).is_file() {
+        eprintln!("skipping: {} not present", slot.data_file_name());
+        return;
+    }
+    let scratch = scratch_copy(&dir, slot, "m4-items");
+    let data_path = scratch.join(slot.data_file_name());
+
+    let mut bundle = SaveBundle::load(&data_path, keys.clone()).unwrap();
+    let inventory = bundle.inventory("Inventory").expect("the exosuit inventory");
+    let path = inventory.path.clone();
+    let before_slots = inventory.slots.len();
+    if inventory.free_cells().is_empty() {
+        eprintln!("skipping: the exosuit inventory has no free cells");
+        let _ = std::fs::remove_dir_all(&scratch);
+        return;
+    }
+
+    // 1. Top up a stack that has room, which must not add a slot.
+    let fill = inventory
+        .slots
+        .iter()
+        .find(|item| item.kind != nms_edit::ItemKind::Technology && item.amount >= 0 && item.amount < item.max_amount)
+        .cloned()
+        .expect("a partly filled stack in the exosuit inventory");
+
+    // 2. Put an item the exosuit does not carry yet into a free cell. The id
+    //    comes from another inventory, so this is real save data rather than a
+    //    made-up string the game would not recognise.
+    let carried: std::collections::HashSet<String> =
+        inventory.slots.iter().map(|item| item.id.clone()).collect();
+    let newcomer = bundle
+        .inventories()
+        .iter()
+        .filter(|other| other.role == nms_edit::InventoryRole::Player)
+        .flat_map(|other| other.slots.iter())
+        .filter(|item| item.kind != nms_edit::ItemKind::Technology)
+        .map(|item| (item.id.clone(), item.kind))
+        .find(|(id, kind)| !carried.contains(id) && bundle.suggest_stack_size(&path, id, *kind).is_some())
+        .expect("an item from elsewhere in the save");
+
+    let mut item = nms_edit::NewItem::new(fill.id.clone(), 1);
+    item.kind = Some(fill.kind);
+    let filled = bundle.add_item(&path, &item).expect("top up a stack");
+    assert_eq!(filled.len(), 1);
+    assert_eq!(filled[0].position, fill.position);
+    assert_eq!(filled[0].amount, fill.amount + 1);
+
+    let mut item = nms_edit::NewItem::new(newcomer.0.clone(), 1);
+    item.kind = Some(newcomer.1);
+    let created = bundle.add_item(&path, &item).expect("add a new stack");
+    assert_eq!(created.len(), 1);
+    let created_cell = created[0].cell;
+
+    let report = bundle
+        .commit(&CommitOptions {
+            backup_root: Some(scratch.join("backups")),
+            keep_backups: 3,
+            timestamp: Some(1_793_488_365),
+            dry_run: false,
+            confirm_live: false,
+        })
+        .unwrap();
+    assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
+    assert!(report.warnings.is_empty(), "unexpected warnings: {:?}", report.warnings);
+
+    let reloaded = SaveBundle::load(&data_path, keys).unwrap();
+    let inventory = reloaded.inventory("Inventory").expect("the exosuit inventory");
+    assert_eq!(inventory.slots.len(), before_slots + 1, "exactly one slot was added");
+    assert_eq!(inventory.slots[fill.position].amount, fill.amount + 1, "the existing stack grew");
+    let added = inventory
+        .slots
+        .iter()
+        .find(|item| item.id == newcomer.0)
+        .expect("the new item");
+    assert_eq!(added.amount, 1);
+    assert_eq!(added.kind, newcomer.1);
+    assert_eq!(added.cell, created_cell);
+
+    // The grid must still be consistent after the edit.
+    let mut cells = std::collections::HashSet::new();
+    for item in &inventory.slots {
+        assert!(cells.insert(item.cell), "two items at {}", item.cell);
+        assert!(inventory.valid_cells.contains(&item.cell), "{} is not a valid cell", item.cell);
+    }
+
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+#[test]
+fn repair_and_move_commit_and_reload() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures");
+        return;
+    };
+    let Some(keys) = full_keys() else {
+        eprintln!("skipping: no community mapping");
+        return;
+    };
+    let slot = Slot::player_state(1);
+    let scratch = scratch_copy(&dir, slot, "m4-repair-move");
+    let data_path = scratch.join(slot.data_file_name());
+
+    let mut bundle = SaveBundle::load(&data_path, keys.clone()).unwrap();
+
+    // Repair whatever is damaged in a player-facing inventory.
+    let damaged: Vec<(nms_edit::InventoryPath, usize)> = bundle
+        .inventories()
+        .into_iter()
+        .filter(|inventory| inventory.role == nms_edit::InventoryRole::Player)
+        .flat_map(|inventory| {
+            let path = inventory.path.clone();
+            inventory
+                .slots
+                .into_iter()
+                .filter(|item| item.damaged())
+                .map(move |item| (path.clone(), item.position))
+        })
+        .collect();
+    for (path, index) in &damaged {
+        assert!(bundle.repair(path, *index).unwrap(), "slot {index} of {path} should repair");
+    }
+
+    // Move a slot to a free cell in the exosuit inventory.
+    let inventory = bundle.inventory("Inventory").expect("the exosuit inventory");
+    let path = inventory.path.clone();
+    let free = inventory.free_cells();
+    let movable = inventory.slots.first().cloned();
+    let (movable, target) = match (movable, free.first().copied()) {
+        (Some(item), Some(cell)) => (item, cell),
+        _ => {
+            eprintln!("skipping moves: no slot or free cell");
+            let _ = std::fs::remove_dir_all(&scratch);
+            return;
+        }
+    };
+    assert!(bundle.move_item(&path, movable.position, target).unwrap());
+
+    let report = bundle
+        .commit(&CommitOptions {
+            backup_root: Some(scratch.join("backups")),
+            keep_backups: 3,
+            timestamp: Some(1_793_488_365),
+            dry_run: false,
+            confirm_live: false,
+        })
+        .unwrap();
+    assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
+
+    let reloaded = SaveBundle::load(&data_path, keys).unwrap();
+    for (path, index) in &damaged {
+        let inventory = reloaded.inventories().into_iter().find(|inv| inv.path == *path).expect("inventory");
+        let item = inventory.slots.iter().find(|item| item.position == *index).expect("slot");
+        assert!(!item.damaged(), "repaired slot must stay repaired");
+    }
+    let inventory = reloaded.inventory("Inventory").expect("the exosuit inventory");
+    let moved = inventory.slots.iter().find(|item| item.position == movable.position).expect("moved slot");
+    assert_eq!(moved.cell, target, "the slot must be in its new cell");
+    assert_eq!(moved.id, movable.id, "moving must not change the item");
+
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+#[test]
+fn known_lists_accept_and_forget_items_in_every_save() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures");
+        return;
+    };
+    let Some(keys) = full_keys() else {
+        eprintln!("skipping: no community mapping");
+        return;
+    };
+
+    let mut checked = 0usize;
+    for slot in player_slots(&dir) {
+        let mut bundle = SaveBundle::load(&dir.join(slot.data_file_name()), keys.clone())
+            .unwrap_or_else(|e| panic!("{slot}: {e}"));
+        for list in nms_edit::KnownList::ALL {
+            let before = bundle.known(list).unwrap_or_else(|e| panic!("{slot}: {}: {e}", list.label()));
+            let probe = format!("^NMSEDIT_PROBE_{}", list.field().to_ascii_uppercase());
+            assert!(!before.contains(&probe), "{slot}: fixture already contains the probe id");
+            let added = bundle
+                .set_known(list, &probe, true)
+                .unwrap_or_else(|e| panic!("{slot}: {} add: {e}", list.label()));
+            assert!(added, "{slot}: {} add reported no change", list.label());
+            assert!(bundle.known(list).unwrap().contains(&probe), "{slot}: {} add did not stick", list.label());
+            assert!(!bundle.set_known(list, &probe, true).unwrap(), "{slot}: {} duplicate add", list.label());
+            assert!(bundle.set_known(list, &probe, false).unwrap(), "{slot}: {} remove", list.label());
+            assert_eq!(bundle.known(list).unwrap(), before, "{slot}: {} remove changed the list", list.label());
+        }
+        checked += 1;
+    }
+    eprintln!("checked known lists in {checked} saves");
+    assert!(checked > 0, "no saves checked");
+}

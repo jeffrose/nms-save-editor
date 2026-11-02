@@ -356,14 +356,14 @@ impl SaveBundle {
     /// for normal saves and `ExpeditionContext` for expedition saves; the same
     /// field therefore has two possible paths. Both are probed, in that order,
     /// and the first that resolves wins.
-    fn player_state_value(&self, path: &str) -> Option<&Value> {
+    pub(crate) fn context_key(&self) -> Option<&'static str> {
         const CONTEXTS: [&str; 2] = ["BaseContext", "ExpeditionContext"];
-        for context in CONTEXTS {
-            if let Ok(value) = self.get(&format!("{context}.PlayerStateData.{path}")) {
-                return Some(value);
-            }
-        }
-        None
+        CONTEXTS.into_iter().find(|context| self.get(&format!("{context}.PlayerStateData")).is_ok())
+    }
+
+    pub(crate) fn player_state_value(&self, path: &str) -> Option<&Value> {
+        let context = self.context_key()?;
+        self.get(&format!("{context}.PlayerStateData.{path}")).ok()
     }
 
     fn player_state_string(&self, path: &str) -> Option<String> {

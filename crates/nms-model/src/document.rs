@@ -95,6 +95,17 @@ impl Document {
         self.dirty = true;
     }
 
+    /// Mutable access to the tree **without** marking the document edited.
+    ///
+    /// An operation that validates first and writes second needs this: taking
+    /// [`Document::tree_mut`] and then failing would leave the document dirty,
+    /// and a dirty document is re-serialised even if nothing changed — which
+    /// would rewrite the file for a rejected edit. The caller must call
+    /// [`Document::mark_dirty`] once a change is actually made.
+    pub fn tree_raw_mut(&mut self) -> &mut Value {
+        &mut self.tree
+    }
+
     /// Whether anything has been edited since parsing.
     pub fn is_dirty(&self) -> bool {
         self.dirty

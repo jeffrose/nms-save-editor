@@ -3,8 +3,8 @@
 A No Man's Sky save editor, written in Rust.
 
 **Status: early.** The format layer is complete and verified against real saves;
-the editor itself is being built on top of it. There is no GUI yet — the current
-binary reads, verifies and reports.
+currencies, inventories and known-item lists are editable from the library and
+the CLI. There is no GUI yet.
 
 ## Why another one
 
@@ -56,6 +56,17 @@ storage slot    2 (PlayerState1)
 | `nmsedit data info` | show the installed data pack |
 | `nmsedit data lookup <id>` | print game text by id |
 | `nmsedit data item <id>` | print item names by id, with the source of each name |
+| `nmsedit currencies <save.hg>` | show units, nanites and quicksilver |
+| `nmsedit currency <save.hg> <name> <value>` | set one balance and commit |
+| `nmsedit inventories <save.hg> [--all]` | list inventories, their grids and roles |
+| `nmsedit inventory <save.hg> <name>` | list one inventory's slots, with item names |
+| `nmsedit add-item <save.hg> <inv> <id> <amount>` | add items, filling stacks first (`--kind`, `--max`, `--cell`) |
+| `nmsedit remove-item <save.hg> <inv> <slot>` | remove a slot |
+| `nmsedit set-amount <save.hg> <inv> <slot> <amount>` | set a slot's amount |
+| `nmsedit repair <save.hg> [<inv> <slot>]` | repair one slot, or every damaged slot |
+| `nmsedit move-item <save.hg> <inv> <slot> <x> <y>` | move a slot to another cell |
+| `nmsedit known <save.hg> [list]` | list learned ids |
+| `nmsedit known-add` / `known-remove <save.hg> <list> <id>` | learn or forget an id |
 
 There is also an in-game verification harness that runs the game against a
 throwaway Proton prefix, because on PC the saves live inside the Steam
@@ -64,16 +75,34 @@ account: `tools/sandbox-test.sh` (see [`docs/verification.md`](docs/verification
 
 Editing works on readable, dotted paths that are resolved through the key map,
 so what you type is the field name and what lands on disk is the spelling the
-game reads:
+game reads. The player-state commands address inventories the same way, by the
+label `nmsedit inventories` prints:
 
 ```console
 $ nmsedit set save.hg CommonStateData.SaveName "Voyager Alpha"
 save.hg (PlayerState13)
   CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha
-CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha (payload 8825445 -> 8825437 bytes; 9 metadata words refreshed)
-backup: Save Backups/save13_20261101_011825.zip (1926925 bytes)
-wrote: 2605205 bytes (metadata: 432 bytes)
+CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha (payload 8825566 -> 8825558 bytes, 21 byte(s) changed at offset 57; 9 metadata words refreshed)
+backup: Save Backups/save13_20261102_000607.zip (1926927 bytes)
+wrote: 2605172 bytes (metadata: 432 bytes)
+
+$ nmsedit currency save.hg units 123456789
+units: 1757937817 -> 123456789
+save.hg (PlayerState13)
+  BaseContext.PlayerStateData.Units: 1757937817 -> 123456789
+BaseContext.PlayerStateData.Units: 1757937817 -> 123456789 (payload 8825445 -> 8825444 bytes, 9 byte(s) changed at offset 943447; 3 metadata words refreshed)
+backup: Save Backups/save13_20261102_000544.zip (1926925 bytes)
+wrote: 2605298 bytes (metadata: 432 bytes)
+
+$ nmsedit inventory save.hg Inventory | head -3
+Inventory  10x12  77/120 slots  group Personal  class C
+[  0] ( 0, 5) ^AMMO                      PROJECTILE AMMUNITION             9552/9999
+[  1] ( 2, 3) ^ROBOT1                    PUGNEUM                           1210/9999
 ```
+
+Every balance is limited to the game's own 32-bit range, `--dry-run` plans an
+edit without writing, and a refused edit (a full grid, an occupied cell, an
+amount the slot cannot hold) leaves the save untouched.
 
 ## Guarantees
 
@@ -101,18 +130,25 @@ Verified against 62 real files from a live 7.x save set:
    `--confirm-live`, because Steam Cloud would propagate the edit to every
    machine on the account. Scratch copies marked with `.nmsedit-sandbox` are
    exempt.
+9. **Player-state edits are validated before anything changes.** A full grid, an
+   occupied cell, an amount outside the slot or an unknown inventory leaves the
+   document clean, so a refused edit cannot cause a file to be rewritten. Adding
+   an item fills existing stacks first, and stack sizes are measured from the
+   save itself rather than guessed from a table.
 
 Details and measurements: [`docs/findings-m0.md`](docs/findings-m0.md),
 [`docs/findings-m2.md`](docs/findings-m2.md),
+[`docs/findings-m4.md`](docs/findings-m4.md),
 [`docs/format/save-file.md`](docs/format/save-file.md),
-[`docs/format/metadata.md`](docs/format/metadata.md).
+[`docs/format/metadata.md`](docs/format/metadata.md),
+[`docs/format/player-state.md`](docs/format/player-state.md).
 
 ## Layout
 
 ```
 crates/nms-format   LZ4 block containers, Latin-1 payloads, XXTEA metadata, atomic writes
 crates/nms-model    exact-text JSON documents, key mapping, path access, change reporting
-crates/nms-edit     load/edit/plan/commit, metadata mirroring, backups
+crates/nms-edit     load/edit/plan/commit, metadata mirroring, backups, player state
 crates/nms-pak      HGPAK reader for the game's own .pak archives
 crates/nms-data     regenerates game text from a local installation
 crates/nms-cli      the nmsedit binary
@@ -137,8 +173,8 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 |---|---|
 | **M1 (done)** | format layer, fidelity guarantees, verification CLI |
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
-| **M3 (in progress)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
-| M4 | editing: currencies, inventories, known items — library first, then GUI |
+| **M3 (done)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
+| **M4 (done)** | player state: currencies, inventory grids and slots, known-item lists — library and CLI, with the measured invariants in [`docs/format/player-state.md`](docs/format/player-state.md) |
 | M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |

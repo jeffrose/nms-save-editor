@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use nms_edit::{CommitOptions, SaveBundle, now_unix};
+use nms_edit::{
+    Cell, CommitOptions, Currency, Inventory, ItemKind, ItemSlot, KnownList, NewItem, SaveBundle, now_unix,
+};
 use nms_format::metadata::{Metadata, MetadataPatch, Slot};
 use nms_format::SaveFile;
 use nms_model::{Document, KeyMap};
@@ -26,6 +28,34 @@ USAGE:
                                            themselves backed up first)
     nmsedit verify <save-dir>              round-trip every file and report fidelity
     nmsedit mapping <mapping.json>         load a community key mapping and report it
+
+PLAYER (readable field names need a community key mapping, see --mapping):
+    nmsedit currencies <save.hg>           show units, nanites and quicksilver
+    nmsedit currency <save.hg> <name> <value>
+                                           set one balance (units, nanites or
+                                           quicksilver) and commit
+    nmsedit inventories <save.hg> [--all]  list inventories and their grids
+    nmsedit inventory <save.hg> <name>     list one inventory's slots
+    nmsedit add-item <save.hg> <inv> <id> <amount>
+                                           add items, filling stacks first
+                                           [--kind product|substance|technology]
+                                           [--max <n>] [--cell <x,y>]
+    nmsedit remove-item <save.hg> <inv> <slot>
+                                           remove the slot at that array index
+    nmsedit set-amount <save.hg> <inv> <slot> <amount>
+                                           set a slot's amount (-1 is \"no charge\"
+                                           for technology)
+    nmsedit repair <save.hg> [<inv> <slot>]
+                                           repair one slot, or every damaged slot
+                                           in the player's inventories
+    nmsedit move-item <save.hg> <inv> <slot> <x> <y>
+                                           move a slot to another grid cell
+    nmsedit known <save.hg> [list]         list learned ids (products, technology,
+                                           specials, base-parts, refiner-recipes)
+    nmsedit known-add <save.hg> <list> <id>
+                                           mark an id as learned
+    nmsedit known-remove <save.hg> <list> <id>
+                                           forget an id
 
 DATA (regenerated from a local game installation):
     nmsedit data refresh                 read the game's archives and write a data pack
@@ -78,6 +108,18 @@ fn main() -> ExitCode {
         Some("restore") => run(&args, cmd_restore),
         Some("verify") => run(&args, cmd_verify),
         Some("mapping") => run(&args, cmd_mapping),
+        Some("currencies") => run(&args, cmd_currencies),
+        Some("currency") => run(&args, cmd_currency),
+        Some("inventories") => run(&args, cmd_inventories),
+        Some("inventory") => run(&args, cmd_inventory),
+        Some("add-item") => run(&args, cmd_add_item),
+        Some("remove-item") => run(&args, cmd_remove_item),
+        Some("set-amount") => run(&args, cmd_set_amount),
+        Some("repair") => run(&args, cmd_repair),
+        Some("move-item") => run(&args, cmd_move_item),
+        Some("known") => run(&args, cmd_known),
+        Some("known-add") => run(&args, cmd_known_edit),
+        Some("known-remove") => run(&args, cmd_known_edit),
         Some("data") => run(&args, cmd_data),
         Some(other) => {
             eprintln!("unknown command {other:?}\n\n{USAGE}");
@@ -110,7 +152,18 @@ fn option(args: &[String], name: &str) -> Option<String> {
 
 /// Positional arguments, ignoring options and their values.
 fn positional(args: &[String]) -> Vec<&str> {
-    let valued = ["--backup-dir", "--keep", "--mapping"];
+    let valued = [
+        "--backup-dir",
+        "--keep",
+        "--mapping",
+        "--pack",
+        "--install",
+        "--language",
+        "--to",
+        "--kind",
+        "--max",
+        "--cell",
+    ];
     let mut out = Vec::new();
     let mut skip = false;
     for (index, arg) in args.iter().enumerate().skip(1) {
@@ -247,13 +300,17 @@ fn cmd_set(args: &[String]) -> Result<(), String> {
     let data_path = PathBuf::from(path);
     let mut bundle = SaveBundle::load(&data_path, keys(args)?).map_err(|e| e.to_string())?;
     bundle.set(field, value).map_err(|e| format!("{field}: {e}"))?;
+    commit_and_report(args, &mut bundle, &data_path)
+}
 
+/// Plan, commit and report an edit that has already been applied in memory.
+fn commit_and_report(args: &[String], bundle: &mut SaveBundle, data_path: &Path) -> Result<(), String> {
     let dry_run = flag(args, "--dry-run");
     let options = CommitOptions {
         backup_root: Some(
             option(args, "--backup-dir")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| default_backup_dir(&data_path)),
+                .unwrap_or_else(|| default_backup_dir(data_path)),
         ),
         keep_backups: option(args, "--keep").and_then(|v| v.parse().ok()).unwrap_or(10),
         timestamp: Some(now_unix()),
@@ -261,7 +318,7 @@ fn cmd_set(args: &[String]) -> Result<(), String> {
         confirm_live: flag(args, "--confirm-live"),
     };
 
-    if let Some(live) = nms_edit::live_save_location(&data_path) {
+    if let Some(live) = nms_edit::live_save_location(data_path) {
         if options.confirm_live {
             println!("note: {} is {}", data_path.display(), live.describe());
             println!("note: {}", live.hazard());
@@ -294,6 +351,374 @@ fn cmd_set(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+
+// ---------------------------------------------------------------------------
+// player state: currencies, inventories, known items
+// ---------------------------------------------------------------------------
+
+/// Load a save for editing, reporting the path on failure.
+fn load_bundle(args: &[String], path: &str) -> Result<SaveBundle, String> {
+    SaveBundle::load(Path::new(path), keys(args)?).map_err(|e| format!("{path}: {e}"))
+}
+
+fn parse_u32(text: &str, what: &str) -> Result<u32, String> {
+    let value: u64 = text
+        .parse()
+        .map_err(|_| format!("{what} must be a whole number from 0 to {}, got {text:?}", u32::MAX))?;
+    u32::try_from(value).map_err(|_| format!("{what} must be a whole number from 0 to {}, got {value}", u32::MAX))
+}
+
+fn parse_amount(text: &str) -> Result<i64, String> {
+    text.parse().map_err(|_| format!("amount must be a whole number, got {text:?}"))
+}
+
+fn parse_cell(text: &str) -> Result<Cell, String> {
+    let (x, y) = text.split_once(',').ok_or_else(|| format!("cell must be written as X,Y, got {text:?}"))?;
+    let x: u64 = x.trim().parse().map_err(|_| format!("cell column must be a whole number, got {x:?}"))?;
+    let y: u64 = y.trim().parse().map_err(|_| format!("cell row must be a whole number, got {y:?}"))?;
+    Ok(Cell::new(x, y))
+}
+
+/// Find an inventory by name, listing what exists when the name is wrong.
+fn inventory_or_error(bundle: &SaveBundle, name: &str) -> Result<Inventory, String> {
+    if let Some(inventory) = bundle.inventory(name) {
+        return Ok(inventory);
+    }
+    let available: Vec<String> = bundle.inventories().iter().map(|inventory| inventory.path.label().to_string()).collect();
+    if available.is_empty() {
+        return Err(format!(
+            "no inventory named {name:?}: this save has no readable inventories\nnote: inventory fields need the community key mapping; see --mapping"
+        ));
+    }
+    let shown: Vec<String> = available.iter().take(20).cloned().collect();
+    let more = available.len().saturating_sub(shown.len());
+    Err(format!(
+        "no inventory named {name:?}\n\navailable inventories:\n  {}{}",
+        shown.join("\n  "),
+        if more > 0 {
+            format!("\n  ... and {more} more (nmsedit inventories --all)")
+        } else {
+            String::new()
+        }
+    ))
+}
+
+/// The data pack, when one has been generated. Item names are decoration for
+/// the commands below; editing works without them.
+fn optional_pack(args: &[String]) -> Option<nms_data::DataPack> {
+    nms_data::DataPack::load(&pack_path(args).ok()?).ok()
+}
+
+fn item_name(pack: Option<&nms_data::DataPack>, id: &str) -> String {
+    pack.and_then(|pack| pack.item_name(id)).unwrap_or_default()
+}
+
+fn print_slot(slot: &ItemSlot, pack: Option<&nms_data::DataPack>) {
+    let mut flags = String::new();
+    if slot.kind == ItemKind::Technology && slot.amount < 0 {
+        flags.push_str("  no charge");
+    }
+    if slot.damage > 0.0 {
+        flags.push_str(&format!("  damaged {:.0}%", slot.damage * 100.0));
+    }
+    if !slot.installed {
+        flags.push_str("  not installed");
+    }
+    // The stack column is padded so flags line up; trim the padding on the
+    // last column instead of leaving trailing spaces in terminal output.
+    let line = format!(
+        "[{:>3}] ({:>2},{:>2}) {:<26} {:<30} {:>7}/{:<7}{}",
+        slot.position,
+        slot.cell.x,
+        slot.cell.y,
+        slot.id,
+        item_name(pack, &slot.id),
+        slot.amount,
+        slot.max_amount,
+        flags
+    );
+    println!("{}", line.trim_end());
+}
+
+fn cmd_currencies(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let bundle = load_bundle(args, path)?;
+    let currencies = bundle.currencies().map_err(|e| e.to_string())?;
+    for currency in Currency::ALL {
+        let value = currencies.get(currency);
+        let note = if value == u32::MAX { "  (at the game's cap)" } else { "" };
+        println!("{:<12} {:>10}{note}", currency.label(), value);
+    }
+    Ok(())
+}
+
+fn cmd_currency(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional
+        .get(1)
+        .ok_or_else(|| format!("missing currency name (units, nanites or quicksilver)\n\n{USAGE}"))?;
+    let value = positional.get(2).ok_or_else(|| format!("missing balance\n\n{USAGE}"))?;
+    let currency = Currency::parse(name)
+        .ok_or_else(|| format!("unknown currency {name:?} (use units, nanites or quicksilver)"))?;
+    let value = parse_u32(value, "the balance")?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let before = bundle.currencies().map_err(|e| e.to_string())?;
+    if !bundle.set_currency(currency, value).map_err(|e| e.to_string())? {
+        println!("{} already holds {value}, nothing to do", currency.label());
+        return Ok(());
+    }
+    println!("{}: {} -> {value}", currency.label(), before.get(currency));
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+fn cmd_inventories(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let bundle = load_bundle(args, path)?;
+    let all = flag(args, "--all");
+    let inventories = bundle.inventories();
+    if inventories.is_empty() {
+        return Err(
+            "this save has no readable inventories\nnote: inventory fields need the community key mapping; see --mapping"
+                .to_string(),
+        );
+    }
+
+    println!("{:<44} {:>7} {:>12}  {:<14} {:<3} role", "inventory", "grid", "used/valid", "group", "cls");
+    let mut shown = 0usize;
+    for inventory in &inventories {
+        if inventory.role == nms_edit::InventoryRole::Auxiliary && !all {
+            continue;
+        }
+        shown += 1;
+        let role = match inventory.role {
+            nms_edit::InventoryRole::Player => "",
+            nms_edit::InventoryRole::Auxiliary => "auxiliary",
+        };
+        println!(
+            "{:<44} {:>7} {:>6}/{:<5}  {:<14} {:<3} {role}",
+            inventory.path.label(),
+            format!("{}x{}", inventory.width, inventory.height),
+            inventory.slots.len(),
+            inventory.valid_cells.len(),
+            inventory.stack_group,
+            inventory.class,
+        );
+    }
+    if shown == 0 {
+        println!("(no player inventories; pass --all to include maintenance and refiner containers)");
+    }
+    Ok(())
+}
+
+fn cmd_inventory(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+    let pack = optional_pack(args);
+
+    println!(
+        "{}  {}x{}  {}/{} slots  group {}  class {}",
+        inventory.path,
+        inventory.width,
+        inventory.height,
+        inventory.slots.len(),
+        inventory.valid_cells.len(),
+        inventory.stack_group,
+        inventory.class
+    );
+    for slot in &inventory.slots {
+        print_slot(slot, pack.as_ref());
+    }
+    Ok(())
+}
+
+fn cmd_add_item(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let id = positional.get(2).ok_or_else(|| format!("missing item id\n\n{USAGE}"))?;
+    let amount = positional.get(3).ok_or_else(|| format!("missing amount\n\n{USAGE}"))?;
+    let amount = parse_amount(amount)?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+
+    let kind = match option(args, "--kind") {
+        Some(text) => Some(
+            ItemKind::parse(&text)
+                .ok_or_else(|| format!("unknown item kind {text:?} (use product, substance or technology)"))?,
+        ),
+        None => None,
+    }
+    .or_else(|| {
+        let pack = optional_pack(args)?;
+        pack.item_category(id).and_then(ItemKind::parse)
+    });
+    let max_amount = option(args, "--max").map(|text| parse_amount(&text)).transpose()?;
+    let cell = option(args, "--cell").map(|text| parse_cell(&text)).transpose()?;
+
+    let item = NewItem { id: id.to_string(), amount, kind, max_amount, cell };
+    let added = bundle.add_item(&inventory.path, &item).map_err(|e| e.to_string())?;
+    let pack = optional_pack(args);
+    for slot in &added {
+        print_slot(slot, pack.as_ref());
+    }
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+fn cmd_remove_item(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let index = positional.get(2).ok_or_else(|| format!("missing slot index\n\n{USAGE}"))?;
+    let index: usize = index.parse().map_err(|_| format!("slot index must be a whole number, got {index:?}"))?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+    let removed = bundle.remove_item(&inventory.path, index).map_err(|e| e.to_string())?;
+    println!("removed {index}: {}", removed.id);
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+fn cmd_set_amount(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let index = positional.get(2).ok_or_else(|| format!("missing slot index\n\n{USAGE}"))?;
+    let amount = positional.get(3).ok_or_else(|| format!("missing amount\n\n{USAGE}"))?;
+    let index: usize = index.parse().map_err(|_| format!("slot index must be a whole number, got {index:?}"))?;
+    let amount = parse_amount(amount)?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+    let before = inventory
+        .slots
+        .iter()
+        .find(|slot| slot.position == index)
+        .map(|slot| slot.amount)
+        .ok_or_else(|| format!("{} has no slot {index}", inventory.path))?;
+    bundle.set_amount(&inventory.path, index, amount).map_err(|e| e.to_string())?;
+    println!("{}[{index}]: {before} -> {amount}", inventory.path);
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+fn cmd_repair(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+
+    match (positional.get(1), positional.get(2)) {
+        (Some(name), Some(index)) => {
+            let index: usize = index.parse().map_err(|_| format!("slot index must be a whole number, got {index:?}"))?;
+            let inventory = inventory_or_error(&bundle, name)?;
+            if !bundle.repair(&inventory.path, index).map_err(|e| e.to_string())? {
+                println!("{}[{index}] is not damaged", inventory.path);
+                return Ok(());
+            }
+            println!("repaired {}[{index}]", inventory.path);
+        }
+        (None, None) => {
+            let repaired = bundle.repair_all().map_err(|e| e.to_string())?;
+            if repaired == 0 {
+                println!("nothing is damaged");
+                return Ok(());
+            }
+            println!("repaired {repaired} damaged slot(s)");
+        }
+        _ => return Err(format!("pass either no inventory, or an inventory and a slot index\n\n{USAGE}")),
+    }
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+fn cmd_move_item(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let index = positional.get(2).ok_or_else(|| format!("missing slot index\n\n{USAGE}"))?;
+    let x = positional.get(3).ok_or_else(|| format!("missing cell column\n\n{USAGE}"))?;
+    let y = positional.get(4).ok_or_else(|| format!("missing cell row\n\n{USAGE}"))?;
+    let index: usize = index.parse().map_err(|_| format!("slot index must be a whole number, got {index:?}"))?;
+    let cell = parse_cell(&format!("{x},{y}"))?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+    if !bundle.move_item(&inventory.path, index, cell).map_err(|e| e.to_string())? {
+        println!("{}[{index}] is already at {cell}", inventory.path);
+        return Ok(());
+    }
+    println!("moved {}[{index}] to {cell}", inventory.path);
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+fn parse_known_list(text: &str) -> Result<KnownList, String> {
+    KnownList::parse(text).ok_or_else(|| {
+        format!("unknown list {text:?} (use products, technology, specials, base-parts or refiner-recipes)")
+    })
+}
+
+fn cmd_known(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let bundle = load_bundle(args, path)?;
+
+    match positional.get(1) {
+        Some(name) => {
+            let list = parse_known_list(name)?;
+            let ids = bundle.known(list).map_err(|e| e.to_string())?;
+            let pack = optional_pack(args);
+            println!("{}: {} id(s)", list.label(), ids.len());
+            for id in &ids {
+                println!("{:<32} {}", id, item_name(pack.as_ref(), id));
+            }
+        }
+        None => {
+            for list in KnownList::ALL {
+                let ids = bundle.known(list).map_err(|e| e.to_string())?;
+                println!("{:<18} {:>5} id(s)", list.label(), ids.len());
+            }
+            println!("\npass a list name to print the ids");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_known_edit(args: &[String]) -> Result<(), String> {
+    let add = args.first().map(String::as_str) == Some("known-add");
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing list name\n\n{USAGE}"))?;
+    let id = positional.get(2).ok_or_else(|| format!("missing item id\n\n{USAGE}"))?;
+    let list = parse_known_list(name)?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let changed = bundle.set_known(list, id, add).map_err(|e| e.to_string())?;
+    let id = nms_edit::normalize_id(id);
+    if !changed {
+        if add {
+            println!("{id} is already known ({})", list.label());
+        } else {
+            println!("{id} is not in the {} list", list.label());
+        }
+        return Ok(());
+    }
+    let (verb, preposition) = if add { ("added", "to") } else { ("removed", "from") };
+    println!("{verb} {id} {preposition} the {} list", list.label());
+    commit_and_report(args, &mut bundle, &data_path)
 }
 
 fn default_backup_dir(data_path: &Path) -> PathBuf {
