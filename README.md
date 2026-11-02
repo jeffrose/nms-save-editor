@@ -181,7 +181,7 @@ nmsedit mcp        # speaks the Model Context Protocol on stdin/stdout
 The same binary is an MCP server, so an agent can answer requests like *"add
 100,000 nanites to my Pioneers save"*: it lists the saves, finds the one named
 Pioneers, resolves what "nanites" means (a balance, not an item), sets it, and
-reports the backup it wrote. Eighteen tools cover the editor: slot listing and
+reports the backup it wrote. Twenty tools cover the editor: slot listing and
 search, balances, inventories and their slots, item add/remove/set-amount,
 repairs, learned lists, arbitrary fields by path, backups and restore.
 
