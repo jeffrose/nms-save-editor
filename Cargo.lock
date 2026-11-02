@@ -1302,6 +1302,7 @@ dependencies = [
 name = "nms-cli"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "nms-data",
  "nms-edit",
  "nms-format",

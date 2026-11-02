@@ -506,6 +506,14 @@ fn read_cell(value: &Value, keys: &KeyMap) -> Option<Cell> {
     Some(Cell::new(named(value, keys, "X")?.1.as_u64()?, named(value, keys, "Y")?.1.as_u64()?))
 }
 
+/// Whether `path` ends with `label`, either exactly or after a dot.
+fn ends_at_boundary(path: &str, label: &str) -> bool {
+    match path.strip_suffix(label) {
+        Some(rest) => rest.is_empty() || rest.ends_with('.'),
+        None => false,
+    }
+}
+
 /// Whether the path passes through a machine-owned container.
 ///
 /// These grids hold repair ingredients and refiner buffers, whose amounts are
@@ -635,7 +643,24 @@ impl SaveBundle {
     /// `PlayerStateData.` prefix.
     pub fn inventory(&self, name: &str) -> Option<Inventory> {
         let wanted = name.trim().strip_prefix("PlayerStateData.").unwrap_or(name.trim());
-        self.inventories().into_iter().find(|inventory| inventory.path.label().eq_ignore_ascii_case(wanted))
+        let inventories = self.inventories();
+        if let Some(inventory) =
+            inventories.iter().find(|inventory| inventory.path.label().eq_ignore_ascii_case(wanted))
+        {
+            return Some(inventory.clone());
+        }
+        // A longer path — one copied out of the JSON tree, say — resolves when
+        // it ends in exactly one label at a dot boundary.
+        let wanted = wanted.to_ascii_lowercase();
+        if wanted.is_empty() {
+            return None;
+        }
+        let mut matches = inventories.into_iter().filter(|inventory| {
+            let label = inventory.path.label().to_ascii_lowercase();
+            !label.is_empty() && ends_at_boundary(&wanted, &label)
+        });
+        let first = matches.next()?;
+        matches.next().is_none().then_some(first)
     }
 
     /// The player's balances.
@@ -1451,6 +1476,39 @@ mod tests {
             assert_eq!(*role, expected, "{label} has the wrong role");
         }
         assert_eq!(roles.len(), 5);
+    }
+
+    #[test]
+    fn an_inventory_resolves_by_label_or_by_a_longer_path() {
+        // One player inventory and one machine container, whose labels share a
+        // word but not a path boundary.
+        let payload = r#"{
+            "Version": 4743,
+            "BaseContext": {
+                "PlayerStateData": {
+                    "Inventory": {"Slots":[],"ValidSlotIndices":[],"Width":1,"Height":1},
+                    "RepairTechBuffer": [
+                        {"MaintenanceContainer": {"Slots":[],"ValidSlotIndices":[],"Width":1,"Height":1}}
+                    ]
+                }
+            }
+        }"#;
+        let bundle = bundle(payload);
+
+        let labels: Vec<String> =
+            bundle.inventories().iter().map(|inventory| inventory.path.label().to_string()).collect();
+        assert!(labels.contains(&"Inventory".to_string()), "{labels:?}");
+
+        // Exact label, with or without the player-state prefix.
+        assert!(bundle.inventory("Inventory").is_some());
+        assert!(bundle.inventory("PlayerStateData.Inventory").is_some());
+        assert!(bundle.inventory("inventory").is_some(), "labels compare case-insensitively");
+
+        // A path copied out of the JSON tree ends in exactly one label.
+        assert!(bundle.inventory("BaseContext.PlayerStateData.Inventory").is_some());
+        // A bare word that only shares a suffix with a label does not match.
+        assert!(bundle.inventory("Container").is_none(), "must match at a dot boundary");
+        assert!(bundle.inventory("ventory").is_none());
     }
 
     #[test]

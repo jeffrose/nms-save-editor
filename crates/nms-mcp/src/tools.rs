@@ -438,22 +438,7 @@ fn inventory_or_error(bundle: &SaveBundle, name: &str) -> Result<Inventory, Stri
     if let Some(inventory) = bundle.inventory(name) {
         return Ok(inventory);
     }
-    // A longer path — one copied out of the JSON tree, say — resolves when it
-    // ends in exactly one inventory's label at a path boundary.
-    let wanted = name.trim().to_ascii_lowercase();
-    if !wanted.is_empty() {
-        let mut matches: Vec<Inventory> = bundle
-            .inventories()
-            .into_iter()
-            .filter(|inventory| {
-                let label = inventory.path.label().to_ascii_lowercase();
-                !label.is_empty() && ends_at_boundary(&wanted, &label)
-            })
-            .collect();
-        if matches.len() == 1 {
-            return Ok(matches.remove(0));
-        }
-    }
+    // A longer path resolves too; see `SaveBundle::inventory`.
     let available: Vec<String> = bundle
         .inventories()
         .iter()
@@ -467,14 +452,6 @@ fn inventory_or_error(bundle: &SaveBundle, name: &str) -> Result<Inventory, Stri
     let shown = available.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
     let more = if available.len() > 12 { ", ..." } else { "" };
     Err(format!("no inventory named {name:?}; available: {shown}{more}"))
-}
-
-/// Whether a label ends with `wanted`, either exactly or after a dot.
-fn ends_at_boundary(label: &str, wanted: &str) -> bool {
-    match label.strip_suffix(wanted) {
-        Some(rest) => rest.is_empty() || rest.ends_with('.'),
-        None => false,
-    }
 }
 
 fn known_list(args: &Args) -> Result<KnownList, String> {

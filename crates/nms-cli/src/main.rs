@@ -96,7 +96,26 @@ OPTIONS:
     -h, --help             show this help
 ";
 
+/// End the process quietly on a closed pipe, as every other CLI tool does.
+///
+/// Rust ignores `SIGPIPE` by default, so `nmsedit info save.hg | head` would
+/// reach a `println!` that panics with "failed printing to stdout: Broken
+/// pipe" once `head` exits. Restoring the default disposition makes the
+/// process die on the signal instead, with nothing on the terminal.
+#[cfg(unix)]
+fn restore_sigpipe() {
+    // Safety: this installs the handler a C program starts with; nothing here
+    // relies on the ignored disposition.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_sigpipe() {}
+
 fn main() -> ExitCode {
+    restore_sigpipe();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("-h") | Some("--help") | None => {
