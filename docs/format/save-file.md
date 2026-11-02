@@ -18,20 +18,22 @@ Only the Steam/GOG layout is implemented so far. The slot mapping is fixed:
 
 | File | Storage slot | Notes |
 |---|---|---|
-| `save.hg` | 2 (`PlayerState1`) | game slot 1, first save point |
-| `save2.hg` | 3 (`PlayerState2`) | game slot 1, second save point |
+| `save.hg` | 2 (`PlayerState1`) | game slot 1, Autosave |
+| `save2.hg` | 3 (`PlayerState2`) | game slot 1, Restore Point |
 | `saveN.hg` | N+1 | `N` runs 1..30, i.e. 15 slots × 2 save points |
 | `accountdata.hg` | 1 (`AccountData`) | account unlocks and rewards |
 | `usersettings.hg` | 0 (`UserSettings`) | options |
 
 ### Two save points per slot
 
-A game slot is two files, not one: `save.hg` and `save2.hg` are slot 1's last
-**auto save** and last **manual save** — two states of the same game at
-different moments, not two halves of one file. Fifteen slots × two save points
-= the thirty `save*.hg` files, which is why a folder listing looks doubled.
-The game's own load menu offers a slot's two, shows the newer one, and loads it
-by default; the older one is where the previous save point is.
+A game slot is two files, not one: `save.hg` and `save2.hg` are slot 1's two
+save points — the game's **Autosave** and its **Restore Point** (the manual
+save) — two states of the same game at different moments, not two halves of one
+file. Fifteen slots × two save points = the thirty `save*.hg` files, which is
+why a folder listing looks doubled. The game's own load menu labels the two
+(`Reload Autosave` / `Reload Restore Point`, the text-table ids
+`UI_RELOAD_AUTO` / `UI_RELOAD_MANUAL`) and loads the newer one by default; the
+older one is the previous save point.
 
 Measured across the 15 pairs of the reference save set:
 
@@ -40,17 +42,20 @@ Measured across the 15 pairs of the reference save set:
   saves — seconds in some pairs, weeks in others;
 * **nothing in either file says which is auto and which is manual.** All 96
   decrypted metadata words were compared between the halves of every pair: not
-  one word separates them, and the payload has no such field either. What
-  separates them is the timestamp (metadata word 89);
-* the community's rule of thumb is that the odd file (`save.hg`, `save3.hg`, …)
-  is the auto save and the even one the manual save. Nothing measured here
-  contradicts it, and nothing confirms it, so this project does not claim it:
-  the editor reports which file is **newer**, which is the part that changes
-  what the game loads.
+  one word separates them, and a full structural diff of the two JSON payloads
+  finds no type field either — only game state (positions, timers, inventories).
+  The timestamp (metadata word 89) is what orders the pair;
+* the role is therefore the **file name**, and the rule — the community's,
+  relied on by every save tool, and matching the game's own labels — is: the
+  odd file (`save.hg`, `save3.hg`, …) is the **Autosave**, the even one
+  (`save2.hg`, `save4.hg`, …) the **Restore Point**. It is the one inference in
+  this document: nothing inside a file can confirm it, and nothing conflicts
+  with it. If a future build changed it, it is one function to change
+  (`SavePointKind::of_player_number`).
 
-That is why `FoundSave` carries `newest`, `paired_path` and `paired_time`, and
-why the editor groups a game slot's two files instead of listing thirty
-separate slots.
+That is why `FoundSave` carries `save_point`, `newest`, `paired_path` and
+`paired_time`, and why the editor groups a game slot's two files instead of
+listing thirty separate slots.
 
 ## 2. Data files: two containers, one payload
 

@@ -755,7 +755,7 @@ impl EditorApp {
             ui.add_space(4.0);
             ui.label(RichText::new("SLOTS").small().strong());
             ui.label(
-                RichText::new("two save points per slot; the game loads the newest")
+                RichText::new("each slot holds an Autosave and a Restore Point; the game loads the newest")
                     .small()
                     .weak(),
             );
@@ -765,10 +765,10 @@ impl EditorApp {
                 return;
             }
 
-            // The save stores two files per game slot — the slot's last auto
-            // save and its last manual save — so they are grouped here. Listing
-            // all thirty files as if they were separate slots is what makes the
-            // list look doubled.
+            // The save stores two files per game slot — an Autosave and a
+            // Restore Point — so they are grouped here. Listing all thirty
+            // files as if they were separate slots is what makes the list look
+            // doubled.
             let mut groups: Vec<(u8, Vec<usize>)> = Vec::new();
             for (index, entry) in self.session.slots.iter().enumerate() {
                 match groups.last_mut() {
@@ -803,7 +803,7 @@ impl EditorApp {
                         }
                         parts.push(summary.play_time_text());
                         if let Some(time) = entry.state_time {
-                            parts.push(format!("newest {}", minute_time(time)));
+                            parts.push(format!("{} {}", entry.save_point.label(), minute_time(time)));
                         }
                         ui.label(RichText::new(parts.join(" · ")).small().weak());
                     }
@@ -816,7 +816,7 @@ impl EditorApp {
                             .as_ref()
                             .is_some_and(|open| open.entry.data_path == entry.data_path);
                         let when = entry.state_time.map(minute_time).unwrap_or_default();
-                        let text = format!("{:<14} {:<6} {}", entry.file_name(), entry.save_point(), when);
+                        let text = format!("{:<14} {:<13} {}", entry.file_name(), entry.save_point.label(), when);
                         if ui.selectable_label(selected, RichText::new(text).small()).clicked() {
                             requested = Some(*index);
                         }
@@ -1304,7 +1304,7 @@ fn overview(
         fact(
             ui,
             "Save point",
-            Some(format!("{} of slot {}", open.entry.save_point(), open.entry.game_slot)),
+            Some(format!("{} (slot {})", open.entry.save_point.label(), open.entry.game_slot)),
         );
     });
 
@@ -1313,12 +1313,13 @@ fn overview(
     if let Some(peer) = &open.entry.paired_path {
         let name = peer.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let when = open.entry.paired_time.map(minute_time).unwrap_or_else(|| "unknown".to_string());
+        let peer_kind = open.entry.save_point.opposite().label();
         ui.add_space(4.0);
         ui.label(
             RichText::new(format!(
-                "The other save point of this slot is {name} ({when}). Each game slot holds two: \
-                 its last auto save and its last manual save, and the game loads the newer one by \
-                 default."
+                "The other save point of this slot is {name}, its {peer_kind} ({when}). Each game \
+                 slot holds one Autosave and one Restore Point, and the game loads the newer of the \
+                 two by default."
             ))
             .small()
             .weak(),
@@ -2509,9 +2510,9 @@ mod tests {
         };
         assert!(text.contains("Slot 1"), "the game slot is the group:\n{text}");
         assert_eq!(text.matches("Slot 1").count(), 1, "one group per game slot:\n{text}");
-        assert!(text.contains("two save points per slot"), "{text}");
-        assert!(line_for(&text, "save.hg").contains("newest"), "{text}");
-        assert!(line_for(&text, "save2.hg").contains("older"), "{text}");
+        assert!(text.contains("Autosave and a Restore Point"), "{text}");
+        assert!(line_for(&text, "save.hg").contains("Autosave"), "{text}");
+        assert!(line_for(&text, "save2.hg").contains("Restore Point"), "{text}");
 
         // Opening the older one says so, and names the other file.
         app.session.select(1);
@@ -2519,6 +2520,7 @@ mod tests {
         let text = drawn_text(&mut app);
         assert!(text.contains("older save point"), "{text}");
         assert!(text.contains("save.hg"), "the other file is named:\n{text}");
+        assert!(text.contains("its Autosave"), "the other file's kind is named:\n{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

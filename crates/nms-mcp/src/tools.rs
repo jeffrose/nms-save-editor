@@ -24,14 +24,18 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "list_slots",
             "List the saves in a folder, with the name, game mode, location and play time their \
-             metadata files carry. Without a folder, the usual save locations on this machine are \
-             searched (NMSEDIT_SAVE_DIR wins when set). Start here to find a save by name.",
+             metadata files carry. Every game slot holds two save points — an Autosave and a \
+             Restore Point (the manual save) — and each result carries save_point and \
+             newest_in_slot so the pair can be told apart; the game loads the newer one by default. \
+             Without a folder, the usual save locations on this machine are searched \
+             (NMSEDIT_SAVE_DIR wins when set). Start here to find a save by name.",
             json!({ "folder": string_prop("A save folder; omit to search the usual locations") }),
             &[],
         ),
         tool(
             "save_info",
-            "Version, platform, active context, save name and play time of one save file.",
+            "Version, platform, active context, save name, play time and save point (Autosave or \
+             Restore Point) of one save file.",
             json!({ "save": save_prop() }),
             &["save"],
         ),
@@ -502,6 +506,7 @@ fn list_slots(args: &Args) -> Result<String, String> {
 fn save_info(server: &Server, args: &Args) -> Result<String, String> {
     let bundle = load(server, &arg_str(args, "save")?)?;
     let info = bundle.info();
+    let save_point = bundle.slot.player_number().map(nms_edit::SavePointKind::of_player_number);
     let metadata = bundle.metadata.as_ref().map(|metadata| {
         json!({
             "save_name": metadata.save_name(),
@@ -513,6 +518,7 @@ fn save_info(server: &Server, args: &Args) -> Result<String, String> {
     Ok(json_text(json!({
         "file": bundle.data_path.display().to_string(),
         "slot": bundle.slot.to_string(),
+        "save_point": save_point.map(|kind| kind.slug()),
         "version": info.version,
         "platform": info.platform,
         "active_context": info.active_context,

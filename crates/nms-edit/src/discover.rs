@@ -97,8 +97,8 @@ pub fn save_dirs(root: &Path) -> Vec<PathBuf> {
 ///
 /// The game keeps **two save points per slot**: `save.hg` and `save2.hg` are
 /// slot 1, `save3.hg` and `save4.hg` are slot 2, and so on. They are separate
-/// states — the game's own load menu offers the slot's last auto save and its
-/// last manual save — not two halves of one file.
+/// states — one Autosave and one Restore Point ([`SavePointKind`]) — not two
+/// halves of one file.
 pub fn game_slot(slot: Slot) -> Option<u8> {
     slot.player_number().map(|number| number.div_ceil(2))
 }
@@ -111,6 +111,64 @@ pub fn game_slot_files(slot: u8) -> Option<(Slot, Slot)> {
     let first = Slot::player_state_checked(slot * 2 - 1)?;
     let second = Slot::player_state_checked(slot * 2)?;
     Some((first, second))
+}
+
+/// Which of a game slot's two save points a file is.
+///
+/// The game keeps one **autosave** and one **restore point** (its manual save)
+/// per slot, and the storage slot fixes which file is which: every odd player
+/// number (`save.hg`, `save3.hg`, …) is the autosave, every even one
+/// (`save2.hg`, `save4.hg`, …) the restore point. The game's own load menu
+/// labels the pair `Reload Autosave` and `Reload Restore Point`
+/// (`UI_RELOAD_AUTO` / `UI_RELOAD_MANUAL` in the text tables).
+///
+/// Nothing inside the files says which is which: the metadata words and the
+/// save content are the same shape on both sides of a pair — measured on 15
+/// real pairs, including a full structural diff of the JSON — so the file name
+/// is the fact, and the community's tooling relies on the same rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavePointKind {
+    /// `save.hg`, `save3.hg`, … — written automatically by the game.
+    Autosave,
+    /// `save2.hg`, `save4.hg`, … — the manual save the game calls a restore point.
+    RestorePoint,
+}
+
+impl SavePointKind {
+    /// The kind of a player save, by its player number: odd is the autosave,
+    /// even the restore point.
+    pub fn of_player_number(number: u8) -> SavePointKind {
+        if number % 2 == 1 {
+            SavePointKind::Autosave
+        } else {
+            SavePointKind::RestorePoint
+        }
+    }
+
+    /// The other kind of the slot's pair.
+    pub fn opposite(self) -> SavePointKind {
+        match self {
+            SavePointKind::Autosave => SavePointKind::RestorePoint,
+            SavePointKind::RestorePoint => SavePointKind::Autosave,
+        }
+    }
+
+    /// The game's own label: `Autosave` or `Restore Point`.
+    pub fn label(self) -> &'static str {
+        match self {
+            SavePointKind::Autosave => "Autosave",
+            SavePointKind::RestorePoint => "Restore Point",
+        }
+    }
+
+    /// The same in the machine spelling used in JSON: `autosave` or
+    /// `restore_point`.
+    pub fn slug(self) -> &'static str {
+        match self {
+            SavePointKind::Autosave => "autosave",
+            SavePointKind::RestorePoint => "restore_point",
+        }
+    }
 }
 
 /// How many player saves a folder holds, without reading any of them.
@@ -181,6 +239,8 @@ pub struct FoundSave {
     pub modified_unix: Option<u64>,
     /// The user-visible game slot (`1..=15`) this save point belongs to.
     pub game_slot: u8,
+    /// Which save point this file is: the slot's autosave or its restore point.
+    pub save_point: SavePointKind,
     /// When the game wrote this save point, in Unix seconds: the metadata's
     /// timestamp, or the file's own modification time when it does not read.
     pub state_time: Option<u64>,
@@ -207,6 +267,7 @@ impl FoundSave {
             "version": self.version,
             "modified_unix": self.modified_unix,
             "game_slot": self.game_slot,
+            "save_point": self.save_point.slug(),
             "state_unix": self.state_time,
             "newest_in_slot": self.newest,
             "paired_file": self.paired_path.as_ref().map(|path| path.display().to_string()),
@@ -225,10 +286,10 @@ pub fn scan(dir: &Path) -> Vec<FoundSave> {
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(slot) = Slot::from_file_name(&name) else { continue };
-        if slot.player_number().is_none() {
+        let Some(player) = slot.player_number() else {
             // `accountdata.hg` and `usersettings.hg` are settings, not saves.
             continue;
-        }
+        };
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -253,6 +314,7 @@ pub fn scan(dir: &Path) -> Vec<FoundSave> {
             version: metadata.as_ref().map(|metadata| metadata.version),
             modified_unix,
             game_slot: game_slot(slot).unwrap_or(0),
+            save_point: SavePointKind::of_player_number(player),
             // The metadata timestamp is the game's own "when"; the file's
             // modification time stands in when the metadata does not read.
             state_time: metadata.as_ref().and_then(Metadata::timestamp).or(modified_unix),
@@ -269,11 +331,11 @@ pub fn scan(dir: &Path) -> Vec<FoundSave> {
 /// Mark which of each game slot's two save points is the newer one, and link
 /// the pair to each other.
 ///
-/// The newer one is what the game shows on its load screen and loads when the
-/// slot is picked; the older one is the slot's previous state (the game's own
-/// menu calls them the slot's last auto save and last manual save). Nothing in
-/// the file says which is which — the metadata words are identical across a
-/// pair, measured on 15 real pairs — so the timestamp decides.
+/// The pair is one autosave and one restore point ([`SavePointKind`]), fixed by
+/// the file name; the newer one is what the game's load screen shows and loads
+/// by default, the older one the slot's previous state. Nothing in the files
+/// says which is newer — the metadata words are identical across a pair,
+/// measured on 15 real pairs — so the timestamp decides.
 fn pair_save_points(saves: &mut [FoundSave]) {
     let mut newest: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
     for (index, save) in saves.iter().enumerate() {
@@ -430,9 +492,29 @@ mod tests {
             assert_eq!(save.game_slot, if name.starts_with("save3") || name.starts_with("save4") { 2 } else { 3 });
             assert!(save.paired_path.is_some(), "{name} knows its other save point");
         }
+        // The kind is the file name: odd player numbers are autosaves, even
+        // ones restore points.
+        assert_eq!(by_name("save3.hg").save_point, SavePointKind::Autosave);
+        assert_eq!(by_name("save4.hg").save_point, SavePointKind::RestorePoint);
+        assert_eq!(by_name("save5.hg").save_point, SavePointKind::Autosave);
+        assert_eq!(by_name("save6.hg").save_point, SavePointKind::RestorePoint);
         assert_eq!(by_name("save4.hg").paired_time, Some(1_000), "the peer's own time, not this file's");
         assert_eq!(by_name("save3.hg").paired_time, Some(2_000));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn odd_player_numbers_are_autosaves_and_even_ones_restore_points() {
+        assert_eq!(SavePointKind::of_player_number(1), SavePointKind::Autosave);
+        assert_eq!(SavePointKind::of_player_number(2), SavePointKind::RestorePoint);
+        assert_eq!(SavePointKind::of_player_number(29), SavePointKind::Autosave);
+        assert_eq!(SavePointKind::of_player_number(30), SavePointKind::RestorePoint);
+        assert_eq!(SavePointKind::Autosave.label(), "Autosave");
+        assert_eq!(SavePointKind::RestorePoint.label(), "Restore Point");
+        assert_eq!(SavePointKind::Autosave.slug(), "autosave");
+        assert_eq!(SavePointKind::RestorePoint.slug(), "restore_point");
+        assert_eq!(SavePointKind::Autosave.opposite(), SavePointKind::RestorePoint);
+        assert_eq!(SavePointKind::RestorePoint.opposite(), SavePointKind::Autosave);
     }
 
     #[test]

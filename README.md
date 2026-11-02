@@ -49,7 +49,7 @@ storage slot    2 (PlayerState1)
 | Command | Purpose |
 |---|---|
 | `nmsedit info <save.hg>` | container layout plus a summary of the save |
-| `nmsedit slots <dir>` | list every slot with platform, version, play time, name |
+| `nmsedit slots <dir>` | list every save with its save point (Autosave or Restore Point), platform, version, play time and name |
 | `nmsedit get <save.hg> <path>` | read a field by readable path |
 | `nmsedit set <save.hg> <path> <value>` | edit a field: back up, write, refresh metadata |
 | `nmsedit export <save.hg\|dir> [out]` | readable JSON for review, sharing or diffing |
@@ -128,10 +128,12 @@ right one is obvious.
 
 The slot list is built from the metadata files, so every save shows its name,
 game mode, location and play time without decompressing anything. Each game
-slot holds **two save points** — its last auto save and its last manual save —
-so the list groups them, marks the newer one (the one the game loads by
-default), and the overview says which you are editing and names the other file. Opening a
-slot adds the save version, balances, known-item counts and every inventory the
+slot holds **two save points** — the game's own **Autosave** and **Restore
+Point**, fixed by the file name (`save.hg`/`save3.hg`… are autosaves,
+`save2.hg`/`save4.hg`… restore points) — so the list groups them, names each,
+marks the newer one (the one the game loads by default), and the overview says
+which you are editing and names the other file. Opening a slot adds the save
+version, balances, known-item counts and every inventory the
 player state carries; the inventory tab draws the grid the game draws, with item
 names from the data pack — the game's own text, regenerated locally — and
 per-slot details on click. Ids the text tables do not name (some legacy

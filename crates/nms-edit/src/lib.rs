@@ -21,7 +21,7 @@ pub mod player;
 pub mod safety;
 
 pub use discover::{
-    FoundSave, default_save_dir, default_save_roots, first_save_dir_in, platform_save_roots,
+    FoundSave, SavePointKind, default_save_dir, default_save_roots, first_save_dir_in, platform_save_roots,
     player_save_count, save_dirs, scan,
 };
 pub use backup::{

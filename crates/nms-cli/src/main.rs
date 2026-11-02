@@ -17,9 +17,9 @@ nmsedit — No Man's Sky save tool
 
 USAGE:
     nmsedit info <save.hg>                 summarise a save file and its JSON payload
-    nmsedit slots <save-dir>               list every save in a directory: two
-                                           save points per game slot, the newer
-                                           one marked
+    nmsedit slots <save-dir>               list every save in a directory: each
+                                           game slot's Autosave and Restore
+                                           Point, the newer one marked
     nmsedit get <save.hg> <path>           read a field by readable path
     nmsedit set <save.hg> <path> <value>   edit a field, back up, and refresh metadata
     nmsedit export <save.hg|dir> [out]     write readable JSON (mapping applied)
@@ -312,6 +312,9 @@ fn cmd_info(args: &[String]) -> Result<(), String> {
     });
     if let Some(slot) = Slot::from_file_name(&path.file_name().unwrap_or_default().to_string_lossy()) {
         println!("storage slot    {} ({})", slot.index(), slot);
+        if let Some(number) = slot.player_number() {
+            println!("save point      {}", nms_edit::SavePointKind::of_player_number(number).label());
+        }
         let metadata_path = path.with_file_name(slot.metadata_file_name());
         if metadata_path.is_file() {
             if let Ok(meta) = Metadata::read(&std::fs::read(&metadata_path).unwrap_or_default(), slot) {
@@ -1070,13 +1073,14 @@ fn cmd_slots(args: &[String]) -> Result<(), String> {
     let positional = positional(args);
     let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
     let keys = keys(args)?;
-    // The save keeps two files per game slot (its last auto save and its last
-    // manual save); the marker says which one the game would load. Ordering by
-    // game slot is what makes the pairs visible.
-    let pairing: std::collections::HashMap<PathBuf, (u8, bool)> = nms_edit::scan(&dir)
-        .into_iter()
-        .map(|save| (save.data_path.clone(), (save.game_slot, save.newest)))
-        .collect();
+    // The save keeps two files per game slot — an Autosave and a Restore Point,
+    // which the file name fixes — and the marker says which one the game would
+    // load. Ordering by game slot is what makes the pairs visible.
+    let pairing: std::collections::HashMap<PathBuf, (u8, nms_edit::SavePointKind, bool)> =
+        nms_edit::scan(&dir)
+            .into_iter()
+            .map(|save| (save.data_path.clone(), (save.game_slot, save.save_point, save.newest)))
+            .collect();
     let mut rows: Vec<(u8, String)> = Vec::new();
 
     for name in list_dir(&dir)? {
@@ -1104,20 +1108,28 @@ fn cmd_slots(args: &[String]) -> Result<(), String> {
             None => "meta: unavailable".to_string(),
         };
 
-        let (game_slot, newest) = pairing.get(&path).copied().unwrap_or((0, false));
+        let (game_slot, kind, newest) = pairing
+            .get(&path)
+            .copied()
+            .unwrap_or((0, nms_edit::SavePointKind::Autosave, false));
         // accountdata/usersettings are not game slots; leave the pair columns
         // empty rather than saying "slot 0".
-        let (slot_text, point) = if game_slot == 0 {
-            ("—".to_string(), "")
+        let (slot_text, point, state) = if game_slot == 0 {
+            ("—".to_string(), String::new(), String::new())
         } else {
-            (game_slot.to_string(), if newest { "newest" } else { "older" })
+            (
+                game_slot.to_string(),
+                kind.label().to_string(),
+                if newest { "newest".to_string() } else { "older".to_string() },
+            )
         };
         rows.push((
             game_slot,
             format!(
-                "slot {:<2} {:<6} {:<12} {:<12} {:>10} bytes  {}  |  {}",
+                "slot {:<2} {:<13} {:<6} {:<12} {:<12} {:>10} bytes  {}  |  {}",
                 slot_text,
                 point,
+                state,
                 name,
                 slot.to_string(),
                 raw.len(),

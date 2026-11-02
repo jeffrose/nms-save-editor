@@ -65,6 +65,8 @@ pub struct SlotEntry {
     pub slot: Slot,
     /// The user-visible game slot (`1..=15`) this save point belongs to.
     pub game_slot: u8,
+    /// Which save point this file is: the slot's autosave or its restore point.
+    pub save_point: nms_edit::SavePointKind,
     /// Whether this is the newer of the game slot's two save points.
     pub newest: bool,
     /// When the game wrote this save point, in Unix seconds.
@@ -88,15 +90,6 @@ impl SlotEntry {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default()
-    }
-
-    /// Which of the slot's two save points this is, in words.
-    pub fn save_point(&self) -> &'static str {
-        if self.newest {
-            "newest"
-        } else {
-            "older"
-        }
     }
 
     /// Name to show in the slot list.
@@ -850,6 +843,7 @@ pub fn scan_dir(dir: &Path) -> Result<Vec<SlotEntry>, String> {
             SlotEntry {
                 slot: save.slot,
                 game_slot: save.game_slot,
+                save_point: save.save_point,
                 newest: save.newest,
                 state_time: save.state_time,
                 paired_path: save.paired_path,
