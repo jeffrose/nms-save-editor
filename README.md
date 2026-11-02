@@ -115,6 +115,13 @@ amount the slot cannot hold) leaves the save untouched.
 cargo run --release -p nms-gui -- /path/to/HelloGames/NMS/st_<id>
 ```
 
+Launched without a folder, the window opens the platform's usual save location
+itself (Steam's Proton prefix on Linux, `%APPDATA%` on Windows, the Application
+Support folder on macOS; `NMSEDIT_SAVE_DIR` overrides it). **Browse…** next to
+the folder box opens a picker: a path box, the usual locations as shortcuts,
+and a directory list that marks the folders actually holding saves, so the
+right one is obvious.
+
 The slot list is built from the metadata files, so every save shows its name,
 game mode, location and play time without decompressing anything. Opening a
 slot adds the save version, balances, known-item counts and every inventory the
@@ -297,7 +304,7 @@ tools/              fixture and data-pipeline scripts
 cargo test --workspace              # unit tests always run
 tools/fetch-fixtures.sh <save.zip>  # then the fixture tests run too
 cargo run -p nms-cli -- info <save.hg>
-cargo run -p nms-gui -- <save-dir>   # or --release for a usable window
+cargo run -p nms-gui -- <save-dir>   # or --release; omit the folder to open the default
 cargo run -p nms-cli -- mcp          # the MCP server, for agents
 ```
 

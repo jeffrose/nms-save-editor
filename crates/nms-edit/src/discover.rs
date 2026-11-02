@@ -1,10 +1,11 @@
 //! Finding the game's save folders and reading their slot lists.
 //!
-//! The editor is normally pointed at a folder, but an agent asked to "add
-//! nanites to my Pioneers save" starts with nothing, so the usual installation
-//! layouts are searched in order. `NMSEDIT_SAVE_DIR` wins when set: it is the
-//! documented way to point the tools at a copy without touching the originals
-//! (and the live-folder guard still applies to whatever it names).
+//! Every face starts from nothing at least once: the window with no argument,
+//! an agent asked to "add nanites to my Pioneers save", a listing of a machine
+//! nobody has configured. So the usual installation layouts are searched in
+//! order, and the first folder that actually holds saves is what
+//! [`default_save_dir`] returns. `NMSEDIT_SAVE_DIR` wins over all of it, which
+//! is the documented way to point the tools at a copy.
 
 use std::path::{Path, PathBuf};
 
@@ -13,17 +14,14 @@ use nms_format::metadata::{Metadata, Slot};
 /// The Steam app id No Man's Sky installs under.
 const APP_ID: &str = "275850";
 
-/// Candidate save roots on this machine, in the order they are tried.
+/// The locations the game uses on this platform, whether or not they exist
+/// yet.
 ///
-/// Only directories that exist are returned, so a caller can report "none of
-/// the usual locations exist" rather than a list of misses.
-pub fn default_save_roots() -> Vec<PathBuf> {
+/// This is what the window puts in its folder field before anything has been
+/// found: the answer to "where would my saves be" on a fresh machine is the
+/// same path, it just is not there yet.
+pub fn platform_save_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
-    let mut push = |path: PathBuf| {
-        if path.is_dir() && !roots.contains(&path) {
-            roots.push(path);
-        }
-    };
 
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         // Steam on Linux, in the layouts seen in the wild: the Debian package,
@@ -35,16 +33,42 @@ pub fn default_save_roots() -> Vec<PathBuf> {
             ".var/app/com.valvesoftware.Steam/.local/share/Steam",
         ] {
             let compatdata = home.join(steam).join("steamapps").join("compatdata").join(APP_ID);
-            push(compatdata.join("pfx/drive_c/users/steamuser/AppData/Roaming/HelloGames/NMS"));
+            roots.push(compatdata.join("pfx/drive_c/users/steamuser/AppData/Roaming/HelloGames/NMS"));
         }
         // The native macOS build.
-        push(home.join("Library/Application Support/HelloGames/NMS"));
+        roots.push(home.join("Library/Application Support/HelloGames/NMS"));
     }
     // Windows, and anything running under Wine with a normal environment.
     if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
-        push(appdata.join("HelloGames/NMS"));
+        roots.push(appdata.join("HelloGames/NMS"));
     }
-    roots
+    // The Steam layouts overlap: on Debian's package `~/.steam/steam` is a
+    // symlink to `~/.steam/debian-installation`, so both spellings would list
+    // the same saves twice.
+    unique_paths(roots)
+}
+
+/// Keep the first spelling of each path, comparing what it resolves to.
+fn unique_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut unique: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let seen = unique
+            .iter()
+            .any(|existing| std::fs::canonicalize(existing).unwrap_or_else(|_| existing.clone()) == key);
+        if !seen {
+            unique.push(path);
+        }
+    }
+    unique
+}
+
+/// Candidate save roots on this machine, in the order they are tried.
+///
+/// Only directories that exist are returned, so a caller can report "none of
+/// the usual locations exist" rather than a list of misses.
+pub fn default_save_roots() -> Vec<PathBuf> {
+    platform_save_roots().into_iter().filter(|path| path.is_dir()).collect()
 }
 
 /// The save directories inside a root: its `st_*` subdirectories, or the root
@@ -67,6 +91,49 @@ pub fn save_dirs(root: &Path) -> Vec<PathBuf> {
     }
     dirs.sort();
     dirs
+}
+
+/// How many player saves a folder holds, without reading any of them.
+///
+/// Used by folder listings: `accountdata.hg`, `usersettings.hg` and the
+/// metadata files are not saves.
+pub fn player_save_count(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            Slot::from_file_name(&name).is_some_and(|slot| slot.player_number().is_some())
+        })
+        .count()
+}
+
+/// The first of `roots` that holds saves, looking inside each for `st_*`
+/// folders too.
+///
+/// Split out from [`default_save_dir`] so the choice can be tested without the
+/// machine's real folders.
+pub fn first_save_dir_in(roots: &[PathBuf]) -> Option<PathBuf> {
+    roots.iter().find_map(|root| save_dirs(root).into_iter().next())
+}
+
+/// The folder a face should open when the user named none.
+///
+/// `NMSEDIT_SAVE_DIR` wins when set; otherwise the usual locations are
+/// searched and the first folder that holds saves is returned. `None` means
+/// "ask the user", not "there are no saves anywhere".
+pub fn default_save_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("NMSEDIT_SAVE_DIR") {
+        if !dir.is_empty() {
+            let dir = PathBuf::from(dir);
+            if dir.is_dir() {
+                // A configured root may hold `st_*` folders or the saves
+                // themselves; open whichever it is.
+                return save_dirs(&dir).into_iter().next().or(Some(dir));
+            }
+        }
+    }
+    first_save_dir_in(&default_save_roots())
 }
 
 /// One save found in a folder, with what its metadata says about it.
@@ -184,6 +251,75 @@ mod tests {
 
         let dirs = save_dirs(&dir);
         assert_eq!(dirs, [dir.clone()], "a folder with saves in it is its own save dir");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_platform_roots_are_a_superset_of_the_existing_ones() {
+        let platform = platform_save_roots();
+        let existing = default_save_roots();
+        assert!(!platform.is_empty(), "a platform with HOME set knows where saves go");
+        assert!(
+            existing.iter().all(|root| platform.contains(root)),
+            "an existing root must be one of the platform's: {existing:?} vs {platform:?}"
+        );
+        assert!(
+            existing.iter().all(|root| root.is_dir()),
+            "default_save_roots only reports folders that are there"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_save_folder_is_not_listed_twice_through_a_symlink() {
+        let root = std::env::temp_dir().join(format!("nms-edit-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let install = root.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        std::os::unix::fs::symlink(&install, root.join("link")).unwrap();
+
+        let unique = unique_paths(vec![root.join("link"), install.clone(), install.clone()]);
+        assert_eq!(unique.len(), 1, "one folder, one entry: {unique:?}");
+        assert_eq!(
+            std::fs::canonicalize(&unique[0]).unwrap(),
+            std::fs::canonicalize(&install).unwrap(),
+            "the kept spelling names the same folder"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_first_root_that_holds_saves_wins() {
+        let root = std::env::temp_dir().join(format!("nms-edit-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let empty = root.join("empty");
+        let first = root.join("first/st_1");
+        let second = root.join("second/st_2");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("save.hg"), b"{}").unwrap();
+        std::fs::write(second.join("save2.hg"), b"{}").unwrap();
+
+        assert_eq!(first_save_dir_in(&[empty.clone(), first.clone(), second]), Some(first));
+        assert_eq!(first_save_dir_in(&[]), None, "nothing to pick from");
+        assert_eq!(first_save_dir_in(&[empty.clone()]), None, "a root with no saves is skipped");
+
+        // A root whose saves sit directly in it is used as-is.
+        assert_eq!(first_save_dir_in(&[root.join("first")]), Some(root.join("first/st_1")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_save_count_ignores_settings_and_metadata_files() {
+        let dir = std::env::temp_dir().join(format!("nms-edit-count-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["save.hg", "save7.hg", "accountdata.hg", "usersettings.hg", "mf_save.hg", "notes.txt"] {
+            std::fs::write(dir.join(name), b"{}").unwrap();
+        }
+        assert_eq!(player_save_count(&dir), 2);
+        assert_eq!(player_save_count(&dir.join("missing")), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

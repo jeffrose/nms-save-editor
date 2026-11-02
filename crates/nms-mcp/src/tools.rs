@@ -13,7 +13,7 @@ use nms_edit::{
 };
 use serde_json::{json, Value};
 
-use crate::Server;
+use crate::{FoundSave, Server};
 
 /// Tool arguments, as the client sent them.
 type Args = serde_json::Map<String, Value>;
@@ -451,6 +451,21 @@ fn known_list(args: &Args) -> Result<KnownList, String> {
     })
 }
 
+/// What a client sees for one save found in a folder.
+fn save_json(save: &FoundSave) -> Value {
+    json!({
+        "folder": save.folder.display().to_string(),
+        "file": save.data_path.display().to_string(),
+        "slot": save.slot.to_string(),
+        "name": save.save_name,
+        "game_mode": save.game_mode,
+        "location": save.location,
+        "play_time_seconds": save.play_time,
+        "version": save.version,
+        "modified_unix": save.modified_unix,
+    })
+}
+
 fn json_text(value: Value) -> String {
     serde_json::to_string(&value).unwrap_or_else(|_| value.to_string())
 }
@@ -483,7 +498,7 @@ fn list_slots(args: &Args) -> Result<String, String> {
         for dir in crate::save_dirs(root) {
             folders.push(dir.display().to_string());
             for save in crate::scan(&dir) {
-                slots.push(save.to_json());
+                slots.push(save_json(&save));
             }
         }
     }

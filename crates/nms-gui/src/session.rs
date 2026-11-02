@@ -237,6 +237,24 @@ impl Session {
         }
     }
 
+    /// Open the platform's usual save folder, when one exists.
+    ///
+    /// The window starts here when it is launched without a folder: the field
+    /// is filled in and the slot list appears, instead of an empty window that
+    /// asks where the saves are. `NMSEDIT_SAVE_DIR` wins when it is set.
+    pub fn open_default() -> Session {
+        match nms_edit::default_save_dir() {
+            Some(dir) => Session::open_dir(&dir),
+            None => {
+                let mut session = Session::empty();
+                session.notes.push(
+                    "no save folder found in the usual locations; type one above, or use Browse".to_string(),
+                );
+                session
+            }
+        }
+    }
+
     /// Open a folder with the user's configured key map and data pack.
     pub fn open_dir(dir: &Path) -> Session {
         let mut notes = Vec::new();

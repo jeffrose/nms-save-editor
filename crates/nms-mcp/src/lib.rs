@@ -19,10 +19,9 @@ use nms_data::DataPack;
 use nms_model::KeyMap;
 use serde_json::{json, Value};
 
-mod discover;
 mod tools;
 
-pub use discover::{default_save_roots, save_dirs, scan, FoundSave};
+pub use nms_edit::{FoundSave, default_save_roots, save_dirs, scan};
 
 /// Name reported to the client.
 pub const SERVER_NAME: &str = "nmsedit";

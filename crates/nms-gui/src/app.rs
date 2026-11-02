@@ -363,6 +363,104 @@ impl JsonState {
     }
 }
 
+/// A directory the folder browser is showing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowseEntry {
+    /// Directory name.
+    name: String,
+    /// Full path.
+    path: PathBuf,
+    /// How many player saves the directory holds.
+    saves: usize,
+}
+
+/// The in-window folder picker.
+///
+/// A native dialog would be one dependency and one more thing that behaves
+/// differently per platform; this is a list of directories, a path box and the
+/// usual save locations as shortcuts, and it can be rendered and tested without
+/// a window.
+struct FolderBrowser {
+    /// The directory being listed.
+    current: PathBuf,
+    /// The path box, which can be typed into.
+    typed: String,
+    /// Directories inside `current`.
+    entries: Vec<BrowseEntry>,
+    /// Why the listing failed, when it did.
+    error: Option<String>,
+    /// Shortcuts: the usual save locations on this machine.
+    roots: Vec<PathBuf>,
+}
+
+impl FolderBrowser {
+    /// Start browsing at `start`, with `roots` as shortcuts.
+    fn open(start: &Path, roots: Vec<PathBuf>) -> FolderBrowser {
+        let mut browser = FolderBrowser {
+            current: start.to_path_buf(),
+            typed: start.display().to_string(),
+            entries: Vec::new(),
+            error: None,
+            roots,
+        };
+        browser.reload();
+        browser
+    }
+
+    /// Show another directory.
+    fn go(&mut self, dir: PathBuf) {
+        self.current = dir;
+        self.typed = self.current.display().to_string();
+        self.reload();
+    }
+
+    fn reload(&mut self) {
+        match list_dirs(&self.current) {
+            Ok(entries) => {
+                self.entries = entries;
+                self.error = None;
+            }
+            Err(message) => {
+                self.entries.clear();
+                self.error = Some(message);
+            }
+        }
+    }
+}
+
+/// The directories inside `dir`, with the saves each holds, sorted by name.
+fn list_dirs(dir: &Path) -> Result<Vec<BrowseEntry>, String> {
+    let entries = std::fs::read_dir(dir).map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        dirs.push(BrowseEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            saves: nms_edit::player_save_count(&path),
+            path,
+        });
+    }
+    dirs.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    Ok(dirs)
+}
+
+/// Where the browser starts: the folder in the box, else the platform's usual
+/// one, else home.
+fn browse_start(path_input: &str) -> PathBuf {
+    let typed = PathBuf::from(path_input.trim());
+    if typed.is_dir() {
+        return typed;
+    }
+    if let Some(dir) = nms_edit::default_save_dir() {
+        return dir;
+    }
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+}
+
 /// A switch that would throw away staged edits, held until the user decides.
 enum PendingSwitch {
     Slot(usize),
@@ -390,6 +488,8 @@ pub struct EditorApp {
     confirm_restore: Option<PathBuf>,
     /// Archive the user asked to delete, awaiting confirmation.
     confirm_delete: Option<PathBuf>,
+    /// The folder picker, when it is open.
+    browser: Option<FolderBrowser>,
 }
 
 impl EditorApp {
@@ -397,15 +497,28 @@ impl EditorApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, dir: Option<PathBuf>) -> EditorApp {
         let session = match &dir {
             Some(dir) => Session::open_dir(dir),
-            None => Session::empty(),
+            // Launched bare: open the platform's usual save folder, so the
+            // window shows saves instead of asking where they are.
+            None => Session::open_default(),
         };
         EditorApp::from_session(session)
     }
 
     /// Build the app around an already-loaded session.
     pub fn from_session(session: Session) -> EditorApp {
+        // With nothing open and nothing found, the field still answers the
+        // question the user is about to ask: where would the saves be on this
+        // platform? The path may not exist yet.
+        let path_input = if session.dir.as_os_str().is_empty() {
+            nms_edit::platform_save_roots()
+                .first()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        } else {
+            session.dir.display().to_string()
+        };
         let mut app = EditorApp {
-            path_input: session.dir.display().to_string(),
+            path_input,
             session,
             tab: Tab::Overview,
             edit: EditState::default(),
@@ -419,6 +532,7 @@ impl EditorApp {
             confirm_discard: false,
             confirm_restore: None,
             confirm_delete: None,
+            browser: None,
         };
         app.sync_edit();
         app
@@ -436,6 +550,7 @@ impl EditorApp {
             self.confirm_discard = false;
             self.confirm_restore = None;
             self.confirm_delete = None;
+            self.browser = None;
             self.pending_switch = None;
         }
         self.top_bar(ctx);
@@ -537,6 +652,17 @@ impl EditorApp {
         self.sync_edit();
     }
 
+    /// Take a folder chosen in the browser: fill the box, then open it.
+    ///
+    /// The dirty check lives in [`EditorApp::open_folder`], so a folder picked
+    /// while edits are staged goes through the same discard prompt as one
+    /// typed by hand.
+    fn choose_folder(&mut self, dir: PathBuf) {
+        self.browser = None;
+        self.path_input = dir.display().to_string();
+        self.open_folder();
+    }
+
     fn open_folder(&mut self) {
         let text = self.path_input.trim().to_string();
         if text.is_empty() {
@@ -576,6 +702,10 @@ impl EditorApp {
                     response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
                 if ui.button("Open").clicked() || submitted {
                     self.open_folder();
+                }
+                if ui.button("Browse…").clicked() {
+                    let start = browse_start(&self.path_input);
+                    self.browser = Some(FolderBrowser::open(&start, nms_edit::default_save_roots()));
                 }
                 if ui.button("Rescan").clicked() {
                     self.session.rescan();
@@ -833,6 +963,103 @@ impl EditorApp {
             }
             if cancel {
                 self.confirm_save = false;
+            }
+        }
+
+        if self.browser.is_some() {
+            let mut go: Option<PathBuf> = None;
+            let mut chosen: Option<PathBuf> = None;
+            let mut close = false;
+            {
+                let browser = self.browser.as_mut().expect("checked above");
+                egui::Window::new("Choose a save folder")
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_size([660.0, 420.0])
+                    .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Folder");
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut browser.typed).desired_width(420.0),
+                            );
+                            let entered = response.lost_focus()
+                                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                            if ui.button("Go").clicked() || entered {
+                                go = Some(PathBuf::from(browser.typed.trim()));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Shortcuts").small().weak());
+                            if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+                                if ui.small_button("Home").clicked() {
+                                    go = Some(home);
+                                }
+                            }
+                            for root in &browser.roots {
+                                let name = root
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| root.display().to_string());
+                                if ui.small_button(name).on_hover_text(root.display().to_string()).clicked() {
+                                    go = Some(root.clone());
+                                }
+                            }
+                        });
+                        ui.separator();
+                        if let Some(error) = &browser.error {
+                            ui.colored_label(Color32::from_rgb(220, 110, 110), error);
+                        }
+                        egui::ScrollArea::vertical()
+                            .id_salt("browse-list")
+                            .auto_shrink([false, false])
+                            .max_height(260.0)
+                            .show(ui, |ui| {
+                                if let Some(parent) = browser.current.parent() {
+                                    if ui.selectable_label(false, "..").clicked() {
+                                        go = Some(parent.to_path_buf());
+                                    }
+                                }
+                                for entry in &browser.entries {
+                                    // Folders holding saves are the interesting
+                                    // ones, so say so rather than making the
+                                    // user open every folder in turn.
+                                    let text = match entry.saves {
+                                        0 => entry.name.clone(),
+                                        1 => format!("{}   · 1 save", entry.name),
+                                        n => format!("{}   · {n} saves", entry.name),
+                                    };
+                                    let response = ui.selectable_label(false, text);
+                                    if response.clicked() {
+                                        go = Some(entry.path.clone());
+                                    }
+                                    response.on_hover_text(entry.path.display().to_string());
+                                }
+                            });
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if ui.button("Use this folder").clicked() {
+                                chosen = Some(browser.current.clone());
+                            }
+                            if ui.button("Cancel").clicked() {
+                                close = true;
+                            }
+                            ui.label(
+                                RichText::new(format!("{} folders here", browser.entries.len())).small().weak(),
+                            );
+                        });
+                    });
+            }
+            if let Some(dir) = go {
+                if let Some(browser) = self.browser.as_mut() {
+                    browser.go(dir);
+                }
+            }
+            if let Some(dir) = chosen {
+                self.choose_folder(dir);
+            }
+            if close {
+                self.browser = None;
             }
         }
 
@@ -2012,6 +2239,90 @@ mod tests {
     }
 
     #[test]
+    fn the_folder_field_defaults_to_the_platform_location() {
+        // Nothing opened and nothing found: the box still says where the game
+        // would keep its saves on this platform.
+        let bare = EditorApp::from_session(Session::empty());
+        assert!(bare.path_input.contains("HelloGames"), "{}", bare.path_input);
+        assert!(bare.path_input.contains("NMS"), "{}", bare.path_input);
+
+        // A loaded folder wins over the hint.
+        let dir = scratch("field-default");
+        let opened = app(&dir);
+        assert_eq!(opened.path_input, dir.display().to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_browser_lists_directories_and_counts_their_saves() {
+        let root = scratch("browse");
+        let empty = root.join("Documents");
+        let saves = root.join("st_76561197970834089");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&saves).unwrap();
+        for name in ["save.hg", "save2.hg", "accountdata.hg", "mf_save.hg"] {
+            std::fs::write(saves.join(name), b"{}").unwrap();
+        }
+        std::fs::write(root.join("notes.txt"), b"not a folder").unwrap();
+
+        let entries = list_dirs(&root).expect("list the scratch root");
+        assert_eq!(entries.len(), 2, "files are not folders: {entries:?}");
+        assert_eq!(entries[0].name, "Documents", "sorted by name, case-insensitively");
+        assert_eq!(entries[0].saves, 0);
+        assert_eq!(entries[1].name, "st_76561197970834089");
+        assert_eq!(entries[1].saves, 2, "settings and metadata files are not saves");
+
+        // A folder that cannot be read is an error, not a panic.
+        assert!(list_dirs(&root.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_browser_navigates_and_the_window_draws_it() {
+        let root = scratch("browse-draw");
+        std::fs::create_dir_all(root.join("st_1")).unwrap();
+        std::fs::write(root.join("st_1/save.hg"), b"{}").unwrap();
+
+        let mut app = app(&root);
+        app.browser = Some(FolderBrowser::open(&root, vec![root.clone()]));
+        let text = drawn_text(&mut app);
+        for expected in [
+            "Choose a save folder",
+            "Use this folder",
+            "st_1",
+            "1 save",
+            "Shortcuts",
+            "Go",
+        ] {
+            assert!(text.contains(expected), "the browser should draw {expected:?}:\n{text}");
+        }
+
+        // Entering a directory relists it; `..` walks back out.
+        let browser = app.browser.as_mut().expect("open");
+        browser.go(root.join("st_1"));
+        assert_eq!(browser.typed, root.join("st_1").display().to_string());
+        assert!(browser.entries.is_empty(), "a save folder holds files, not folders");
+        browser.go(root.clone());
+        assert_eq!(browser.entries.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn choosing_a_folder_opens_it() {
+        let root = scratch("choose");
+        std::fs::create_dir_all(root.join("st_1")).unwrap();
+        std::fs::write(root.join("st_1/save.hg"), SAVE.as_bytes()).unwrap();
+
+        let mut app = app(&root);
+        app.choose_folder(root.join("st_1"));
+        assert_eq!(app.path_input, root.join("st_1").display().to_string());
+        assert_eq!(app.session.dir, root.join("st_1"));
+        assert_eq!(app.session.slots.len(), 1, "the chosen folder is scanned");
+        assert!(app.browser.is_none(), "the picker closes once it is used");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn large_balances_get_thousands_separators() {
         assert_eq!(thousands(0), "0");
         assert_eq!(thousands(999), "999");
@@ -2036,7 +2347,9 @@ mod tests {
         app.sync_edit();
 
         let text = drawn_text(&mut app);
-        for expected in ["nmsedit", "PlayerState1", "CURRENCIES", "units", "1 200", "Set", "KNOWN ITEMS"] {
+        for expected in
+            ["nmsedit", "Browse", "PlayerState1", "CURRENCIES", "units", "1 200", "Set", "KNOWN ITEMS"]
+        {
             assert!(text.contains(expected), "the overview should draw {expected:?}:\n{text}");
         }
 

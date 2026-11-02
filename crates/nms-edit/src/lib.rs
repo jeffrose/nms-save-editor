@@ -16,9 +16,14 @@
 
 pub mod backup;
 pub mod bundle;
+pub mod discover;
 pub mod player;
 pub mod safety;
 
+pub use discover::{
+    FoundSave, default_save_dir, default_save_roots, first_save_dir_in, platform_save_roots,
+    player_save_count, save_dirs, scan,
+};
 pub use backup::{
     ArchiveSummary, ArchivedFile, BackupEntry, BackupError, BackupStore, format_timestamp, format_utc, is_kept,
     list_archive, restore_archive,
