@@ -1348,6 +1348,7 @@ dependencies = [
  "nms-edit",
  "nms-format",
  "nms-model",
+ "serde_json",
 ]
 
 [[package]]

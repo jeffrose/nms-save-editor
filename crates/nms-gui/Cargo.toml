@@ -22,3 +22,4 @@ nms-data.workspace = true
 nms-edit.workspace = true
 nms-format.workspace = true
 nms-model.workspace = true
+serde_json.workspace = true

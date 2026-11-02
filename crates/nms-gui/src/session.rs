@@ -18,7 +18,8 @@ use nms_edit::{
     LiveLocation, NewItem, SaveBundle,
 };
 use nms_format::metadata::{Metadata, Slot};
-use nms_model::KeyMap;
+use nms_model::{describe_raw_path, KeyMap, RawStep};
+use serde_json::Value;
 
 /// What a save's metadata file says about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,14 @@ impl SlotSummary {
 /// `hours:minutes:seconds`, with hours allowed to run past 24.
 pub fn format_duration(seconds: u64) -> String {
     format!("{}:{:02}:{:02}", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+}
+
+/// A value as one line of JSON, for change reports.
+///
+/// Numbers keep their exact text (`arbitrary_precision`), so a report never
+/// shows a value the file does not hold.
+fn compact(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 /// One storage slot found in a save folder.
@@ -90,6 +99,20 @@ impl SlotEntry {
     }
 }
 
+/// One search hit in the JSON document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonHit {
+    /// Exact on-disk path of the node.
+    pub steps: Vec<RawStep>,
+    /// Readable path, with on-disk keys where the map knows no name.
+    pub label: String,
+    /// One-line rendering of the value.
+    pub preview: String,
+}
+
+/// How many hits a search keeps before it stops looking.
+pub const JSON_HIT_LIMIT: usize = 300;
+
 /// A save that has been opened and decoded.
 pub struct OpenSave {
     /// The slot entry it was loaded from.
@@ -112,6 +135,11 @@ impl OpenSave {
     /// Whether the in-memory save differs from the file on disk.
     pub fn dirty(&self) -> bool {
         self.bundle.document.is_dirty()
+    }
+
+    /// Read a value by exact on-disk path.
+    pub fn value_at(&self, steps: &[RawStep]) -> Option<&Value> {
+        self.bundle.document.get_raw(steps)
     }
 
     /// Re-read everything the window shows.
@@ -380,6 +408,54 @@ impl Session {
         Ok(if moved { format!("moved to {cell}") } else { "that slot is already there".to_string() })
     }
 
+    /// Render an on-disk path for display, using readable names where known.
+    pub fn path_label(&self, steps: &[RawStep]) -> String {
+        describe_raw_path(steps, &self.keys)
+    }
+
+    /// Find every node whose on-disk key, readable name or scalar value
+    /// contains `filter` (case-insensitive).
+    ///
+    /// Returns the hits, capped at [`JSON_HIT_LIMIT`], and whether the walk
+    /// stopped early. The whole document is walked — measured at 88 ms for a
+    /// 9 MB save in release — so this runs on a button or Enter rather than on
+    /// every keystroke.
+    pub fn search(&self, filter: &str) -> (Vec<JsonHit>, bool) {
+        let needle = filter.trim().to_lowercase();
+        let mut hits = Vec::new();
+        let mut truncated = false;
+        if needle.is_empty() {
+            return (hits, truncated);
+        }
+        if let Some(open) = self.open.as_ref() {
+            let mut steps = Vec::new();
+            let root = open.bundle.document.tree();
+            collect_hits(root, &mut steps, &self.keys, &needle, &mut hits, &mut truncated);
+        }
+        (hits, truncated)
+    }
+
+    /// Stage a replacement of an existing value, addressed by exact path.
+    ///
+    /// Nothing is created: a path that does not resolve is refused, so a typo
+    /// cannot add a field the game does not expect.
+    pub fn set_field(&mut self, steps: &[RawStep], value: Value) -> Result<String, String> {
+        let label = self.path_label(steps);
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let before = open
+            .bundle
+            .document
+            .get_raw(steps)
+            .ok_or_else(|| format!("{label} is no longer there"))?
+            .clone();
+        if before == value {
+            return Ok(format!("{label} is unchanged"));
+        }
+        open.bundle.document.set_raw(steps, value.clone()).map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(format!("{label}: {} -> {}", compact(&before), compact(&value)))
+    }
+
     /// Re-read the open slot from disk, throwing away staged edits.
     pub fn reload(&mut self) -> Result<String, String> {
         let path = self
@@ -457,6 +533,107 @@ impl Session {
         }
         Ok(message)
     }
+}
+
+/// Walk the whole tree once, collecting matching nodes.
+///
+/// This runs over hundreds of thousands of nodes on a real save, so the checks
+/// avoid allocating: paths and previews are only built for the few nodes that
+/// match, and the case-insensitive compare borrows both sides.
+fn collect_hits(
+    value: &Value,
+    steps: &mut Vec<RawStep>,
+    keys: &KeyMap,
+    needle: &str,
+    hits: &mut Vec<JsonHit>,
+    truncated: &mut bool,
+) {
+    if hits.len() >= JSON_HIT_LIMIT {
+        *truncated = true;
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                steps.push(RawStep::Key(key.clone()));
+                // A field matches by its on-disk key, its readable name, or a
+                // scalar value. Descending through it keeps working, so the
+                // fields *under* a match are not reported as matches too.
+                let readable = keys.readable_for(key).unwrap_or(key);
+                let named = contains_ci(key, needle) || contains_ci(readable, needle);
+                if named || scalar_matches(child, needle) {
+                    hits.push(hit(steps, keys, child));
+                }
+                collect_hits(child, steps, keys, needle, hits, truncated);
+                steps.pop();
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                steps.push(RawStep::Index(index));
+                // An index is not worth matching ("3" would find every third
+                // item); only the value is.
+                if scalar_matches(child, needle) {
+                    hits.push(hit(steps, keys, child));
+                }
+                collect_hits(child, steps, keys, needle, hits, truncated);
+                steps.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether a scalar's text contains the needle. Containers never match by
+/// value; their children are visited on their own.
+fn scalar_matches(value: &Value, needle: &str) -> bool {
+    match value {
+        Value::String(text) => contains_ci(text, needle),
+        Value::Bool(true) => contains_ci("true", needle),
+        Value::Bool(false) => contains_ci("false", needle),
+        Value::Null => contains_ci("null", needle),
+        Value::Number(number) => contains_ci(number.as_str(), needle),
+        Value::Array(_) | Value::Object(_) => false,
+    }
+}
+
+fn hit(steps: &[RawStep], keys: &KeyMap, value: &Value) -> JsonHit {
+    JsonHit { steps: steps.to_vec(), label: describe_raw_path(steps, keys), preview: json_summary(value) }
+}
+
+/// Case-insensitive `contains`, ASCII rules, with the needle already lowered.
+///
+/// Save keys are ASCII; a non-ASCII needle still matches exact bytes, which is
+/// what a name search needs anyway.
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    needle.len() <= haystack.len()
+        && haystack.windows(needle.len()).any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// A one-line rendering of a value for the tree and search hits.
+pub fn json_summary(value: &Value) -> String {
+    match value {
+        Value::String(text) => shorten(text, 80),
+        Value::Null => "null".to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::Array(items) => format!("[{} items]", items.len()),
+        Value::Object(map) => format!("{{{} fields}}", map.len()),
+    }
+}
+
+/// Cut a long string for display, keeping the front.
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max).collect();
+    format!("{head}…")
 }
 
 /// List the save slots in a folder, ordered by slot number.
@@ -808,6 +985,47 @@ mod tests {
         assert_eq!(iron.max_amount, 20);
     }
 
+    #[test]
+    fn a_json_field_edit_stages_and_saves() {
+        let scratch = Scratch::new("json");
+        scratch.write("save.hg", SAVE.as_bytes());
+        let mut session = session(&scratch.0);
+        session.select(0);
+
+        let steps = [
+            RawStep::Key("BaseContext".to_string()),
+            RawStep::Key("PlayerStateData".to_string()),
+            RawStep::Key("Units".to_string()),
+        ];
+        let open = session.open.as_ref().expect("open");
+        assert_eq!(open.value_at(&steps).and_then(Value::as_i64), Some(1200));
+        assert_eq!(session.path_label(&steps), "BaseContext.PlayerStateData.Units");
+
+        let report = session.set_field(&steps, Value::from(4321)).expect("stage the edit");
+        assert!(report.contains("1200 -> 4321"), "{report}");
+        assert!(session.dirty());
+        // The derived views follow the document, not a stale copy.
+        assert_eq!(session.open.as_ref().expect("open").currencies.expect("currencies").units, 4321);
+
+        session.save().expect("save the edit");
+        session.reload().expect("reload");
+        let open = session.open.as_ref().expect("open");
+        assert_eq!(open.value_at(&steps).and_then(Value::as_i64), Some(4321));
+    }
+
+    #[test]
+    fn a_refused_json_edit_leaves_the_save_clean() {
+        let scratch = Scratch::new("json-refused");
+        scratch.write("save.hg", SAVE.as_bytes());
+        let mut session = session(&scratch.0);
+        session.select(0);
+
+        let missing = [RawStep::Key("BaseContext".to_string()), RawStep::Key("Nope".to_string())];
+        let error = session.set_field(&missing, Value::from(1)).expect_err("no such field");
+        assert!(error.contains("no longer there"), "{error}");
+        assert!(!session.dirty(), "a refused JSON edit must not dirty the document");
+    }
+
     // -----------------------------------------------------------------------
     // fixture test: real saves, real metadata
     // -----------------------------------------------------------------------
@@ -859,6 +1077,53 @@ mod tests {
                 Some(base.join("nmsedit").join("mapping.json"))
             })?;
         KeyMap::load(&path).ok().map(|loaded| KeyMap::builtin().extended_with(&loaded))
+    }
+
+    #[test]
+    fn a_real_save_can_be_searched() {
+        let Some(account) = fixture_account_dir() else {
+            eprintln!("skipping: no fixtures (run tools/fetch-fixtures.sh)");
+            return;
+        };
+        let Some(keys) = fixture_keys() else {
+            eprintln!("skipping: no community mapping");
+            return;
+        };
+        let slot = (Slot::FIRST_PLAYER..=Slot::LAST_PLAYER)
+            .filter_map(Slot::player_state_checked)
+            .find(|slot| {
+                account.join(slot.data_file_name()).is_file()
+                    && account.join(slot.metadata_file_name()).is_file()
+            })
+            .expect("an account folder with a save has one complete player slot");
+
+        let scratch = Scratch::new("fixture-search");
+        std::fs::copy(account.join(slot.data_file_name()), scratch.0.join(slot.data_file_name()))
+            .expect("copy the save");
+        let mut session = Session::open_dir_with(&scratch.0, keys, None, Vec::new());
+        session.select(0);
+
+        // The player's balance lives under its readable name in a real save,
+        // and the walk has to find it through the key map.
+        let (hits, truncated) = session.search("Units");
+        assert!(!truncated, "a single name should not hit the cap");
+        let open = session.open.as_ref().expect("open");
+        let units = open.currencies.expect("currencies").units;
+        // Another context could hold a `Units` field too, so pick the one that
+        // is the balance the player-state reader returned.
+        let hit = hits
+            .iter()
+            .find(|hit| {
+                hit.label.ends_with(".Units")
+                    && open.value_at(&hit.steps).and_then(Value::as_i64).map(|stored| stored as u32)
+                        == Some(units)
+            })
+            .unwrap_or_else(|| panic!("no Units hit matching {units} among {} hits", hits.len()));
+        assert!(!hit.steps.is_empty());
+
+        // Searching is case-insensitive and can match a value too.
+        let (hits, _) = session.search("wIn|FiNaL");
+        assert!(hits.iter().any(|hit| hit.preview.contains("Win|Final")), "value search finds the platform");
     }
 
     #[test]

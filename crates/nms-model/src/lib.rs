@@ -8,5 +8,8 @@
 pub mod document;
 pub mod keymap;
 
-pub use document::{ByteDiff, Document, ModelError, PathError, SaveInfo, TreeChange, readable_tree, tree_diff};
+pub use document::{
+    ByteDiff, Document, ModelError, PathError, RawStep, SaveInfo, TreeChange, describe_raw_path, readable_tree,
+    tree_diff,
+};
 pub use keymap::KeyMap;

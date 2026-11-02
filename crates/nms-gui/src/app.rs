@@ -18,14 +18,17 @@ use eframe::egui::{
 };
 use nms_data::DataPack;
 use nms_edit::{Cell, Currency, Inventory, InventoryRole, ItemKind, ItemSlot};
+use nms_model::{describe_raw_path, KeyMap, RawStep};
+use serde_json::Value;
 
-use crate::session::{format_duration, OpenSave, Session};
+use crate::session::{format_duration, json_summary, JsonHit, OpenSave, Session, JSON_HIT_LIMIT};
 
 /// Which part of a save the central panel is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Overview,
     Inventories,
+    Json,
 }
 
 /// The item kind a new stack should be written as.
@@ -169,8 +172,132 @@ enum Action {
         position: usize,
         cell: Cell,
     },
+    /// Replace an existing value, addressed by exact on-disk path.
+    SetField {
+        steps: Vec<RawStep>,
+        value: Value,
+    },
     Save,
     Discard,
+}
+
+/// The JSON value kind, so the editor can offer the right control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonKind {
+    Null,
+    Bool,
+    Number,
+    String,
+    Array,
+    Object,
+}
+
+impl JsonKind {
+    fn of(value: &Value) -> JsonKind {
+        match value {
+            Value::Null => JsonKind::Null,
+            Value::Bool(_) => JsonKind::Bool,
+            Value::Number(_) => JsonKind::Number,
+            Value::String(_) => JsonKind::String,
+            Value::Array(_) => JsonKind::Array,
+            Value::Object(_) => JsonKind::Object,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            JsonKind::Null => "null",
+            JsonKind::Bool => "boolean",
+            JsonKind::Number => "number",
+            JsonKind::String => "string",
+            JsonKind::Array => "array",
+            JsonKind::Object => "object",
+        }
+    }
+}
+
+/// The JSON tab's controls, as opposed to the document.
+struct JsonState {
+    filter: String,
+    /// The text the hits below were computed for; `None` before a search.
+    searched_for: Option<String>,
+    hits: Vec<JsonHit>,
+    hits_truncated: bool,
+    /// Exact path of the selected node.
+    selected: Option<Vec<RawStep>>,
+    /// Text box for the selected scalar.
+    edit_text: String,
+    /// Checkbox for the selected boolean.
+    edit_bool: bool,
+    /// The kind the editor was filled for.
+    edit_kind: Option<JsonKind>,
+    /// The value the editor was filled from.
+    edit_original: Option<Value>,
+    /// Ancestor paths to force open, so a hit is visible when it is clicked.
+    reveal: Vec<Vec<RawStep>>,
+}
+
+impl Default for JsonState {
+    fn default() -> Self {
+        JsonState {
+            filter: String::new(),
+            searched_for: None,
+            hits: Vec::new(),
+            hits_truncated: false,
+            selected: None,
+            edit_text: String::new(),
+            edit_bool: false,
+            edit_kind: None,
+            edit_original: None,
+            reveal: Vec::new(),
+        }
+    }
+}
+
+impl JsonState {
+    /// Point the editor at a node and fill it from the value.
+    fn select(&mut self, steps: &[RawStep], value: &Value) {
+        self.selected = Some(steps.to_vec());
+        self.edit_kind = Some(JsonKind::of(value));
+        self.edit_original = Some(value.clone());
+        match value {
+            Value::String(text) => self.edit_text = text.clone(),
+            Value::Number(_) => self.edit_text = value.to_string(),
+            Value::Bool(flag) => self.edit_bool = *flag,
+            _ => self.edit_text.clear(),
+        }
+    }
+
+    /// Re-read the editor from the document after an edit.
+    fn sync(&mut self, open: &OpenSave) {
+        let Some(steps) = self.selected.clone() else { return };
+        match open.value_at(&steps) {
+            Some(value) => self.select(&steps, value),
+            None => {
+                // The edit removed the node (or its parent); nothing to show.
+                self.selected = None;
+                self.edit_kind = None;
+                self.edit_original = None;
+                self.edit_text.clear();
+            }
+        }
+    }
+
+    /// Force the ancestors of `steps` open, so a search hit is visible.
+    fn reveal(&mut self, steps: &[RawStep]) {
+        self.reveal.clear();
+        for end in 1..steps.len() {
+            self.reveal.push(steps[..end].to_vec());
+        }
+    }
+
+    /// Replace the hit list with every node whose path or value matches.
+    fn search(&mut self, session: &Session) {
+        let (hits, truncated) = session.search(&self.filter);
+        self.hits = hits;
+        self.hits_truncated = truncated;
+        self.searched_for = Some(self.filter.clone());
+    }
 }
 
 /// A switch that would throw away staged edits, held until the user decides.
@@ -185,6 +312,7 @@ pub struct EditorApp {
     tab: Tab,
     path_input: String,
     edit: EditState,
+    json: JsonState,
     /// Last message shown in the bottom bar.
     status: Option<String>,
     pending_switch: Option<PendingSwitch>,
@@ -209,6 +337,7 @@ impl EditorApp {
             session,
             tab: Tab::Overview,
             edit: EditState::default(),
+            json: JsonState::default(),
             status: None,
             pending_switch: None,
             confirm_save: false,
@@ -225,6 +354,7 @@ impl EditorApp {
     pub fn ui(&mut self, ctx: &egui::Context) {
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.edit.moving = None;
+            self.json.reveal.clear();
             self.confirm_save = false;
             self.confirm_discard = false;
             self.pending_switch = None;
@@ -234,6 +364,9 @@ impl EditorApp {
         self.slot_panel(ctx);
         self.central(ctx);
         self.dialogs(ctx);
+        // A reveal is a one-shot: the forced-open headers stored their state
+        // this frame, so they stay open without being forced on every frame.
+        self.json.reveal.clear();
     }
 
     /// True when the open save may be edited.
@@ -246,6 +379,7 @@ impl EditorApp {
     fn sync_edit(&mut self) {
         if let Some(open) = self.session.open.as_ref() {
             self.edit.sync(open);
+            self.json.sync(open);
         }
     }
 
@@ -268,6 +402,7 @@ impl EditorApp {
                 self.session.remove_item(inventory, position)
             }
             Action::Move { inventory, position, cell } => self.session.move_item(inventory, position, cell),
+            Action::SetField { steps, value } => self.session.set_field(&steps, value),
             Action::Save => {
                 self.edit.moving = None;
                 self.session.save()
@@ -300,6 +435,7 @@ impl EditorApp {
     fn load_folder(&mut self, path: PathBuf) {
         self.session = Session::open_dir(&path);
         self.edit = EditState::default();
+        self.json = JsonState::default();
         self.tab = Tab::Overview;
         self.status = self.session.error.clone();
         self.sync_edit();
@@ -410,6 +546,9 @@ impl EditorApp {
                 if ui.selectable_label(self.tab == Tab::Inventories, "Inventories").clicked() {
                     self.tab = Tab::Inventories;
                 }
+                if ui.selectable_label(self.tab == Tab::Json, "JSON").clicked() {
+                    self.tab = Tab::Json;
+                }
             });
             ui.separator();
 
@@ -426,6 +565,7 @@ impl EditorApp {
                     editable,
                     self.session.pack.as_ref(),
                 ),
+                Tab::Json => json_tab(ui, &self.session, &mut self.json, editable),
             };
         });
         if let Some(action) = action {
@@ -1048,6 +1188,256 @@ fn slot_details(
     action
 }
 
+/// The JSON tab: a lazy tree, a search over the whole document, and a typed
+/// editor for the selected node.
+///
+/// The tree only walks what is open, so a 9 MB save costs nothing until it is
+/// explored. Search walks everything, which is why it runs on Enter or the
+/// button rather than on every keystroke.
+fn json_tab(ui: &mut egui::Ui, session: &Session, state: &mut JsonState, editable: bool) -> Option<Action> {
+    let Some(open) = session.open.as_ref() else { return None };
+    let keys = &session.keys;
+    let root = open.bundle.document.tree();
+
+    ui.horizontal(|ui| {
+        ui.label("Find");
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut state.filter)
+                .hint_text("key or value")
+                .desired_width(260.0),
+        );
+        let entered = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        if ui.button("Search").clicked() || entered {
+            state.search(session);
+        }
+        if ui.button("Clear").clicked() {
+            state.filter.clear();
+            state.searched_for = None;
+            state.hits.clear();
+            state.hits_truncated = false;
+        }
+        if let Some(searched) = &state.searched_for {
+            let text = if state.hits.is_empty() {
+                format!("no match for {searched:?}")
+            } else if state.hits_truncated {
+                format!("{} matches (first {JSON_HIT_LIMIT} shown)", state.hits.len())
+            } else {
+                format!("{} match(es)", state.hits.len())
+            };
+            ui.label(RichText::new(text).small().weak());
+        }
+    });
+
+    if !state.hits.is_empty() {
+        let mut clicked = None;
+        egui::ScrollArea::vertical()
+            .id_salt("json-hits")
+            .max_height(140.0)
+            .show(ui, |ui| {
+                for (index, hit) in state.hits.iter().enumerate() {
+                    let text = format!("{}  =  {}", hit.label, hit.preview);
+                    if ui.selectable_label(false, text).clicked() {
+                        clicked = Some(index);
+                    }
+                }
+            });
+        if let Some(index) = clicked {
+            let steps = state.hits[index].steps.clone();
+            if let Some(value) = open.value_at(&steps) {
+                state.select(&steps, value);
+                state.reveal(&steps);
+            }
+        }
+    }
+
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Edits here are staged like every other edit: nothing is written until Save. A wrong \
+             value can make the save unreadable, so the backup is what to fall back on.",
+        )
+        .small()
+        .weak(),
+    );
+    ui.add_space(4.0);
+
+    let tree_height = (ui.available_height() - 170.0).max(120.0);
+    egui::ScrollArea::vertical()
+        .id_salt("json-tree")
+        .max_height(tree_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let mut steps = Vec::new();
+            json_node(ui, root, &mut steps, keys, state);
+        });
+
+    ui.add_space(6.0);
+    ui.separator();
+    json_editor(ui, open, keys, state, editable)
+}
+
+/// Draw the document root and everything below it.
+fn json_node(
+    ui: &mut egui::Ui,
+    value: &Value,
+    steps: &mut Vec<RawStep>,
+    keys: &KeyMap,
+    state: &mut JsonState,
+) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                steps.push(RawStep::Key(key.clone()));
+                let label = keys.readable_for(key).unwrap_or(key).to_string();
+                json_child(ui, child, steps, keys, state, &label, key);
+                steps.pop();
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                steps.push(RawStep::Index(index));
+                let label = format!("[{index}]");
+                json_child(ui, child, steps, keys, state, &label, &label);
+                steps.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Draw one node: a collapsing header for a container, a selectable row for a
+/// leaf. `label` is what the user sees, `raw` the on-disk spelling.
+fn json_child(
+    ui: &mut egui::Ui,
+    value: &Value,
+    steps: &mut Vec<RawStep>,
+    keys: &KeyMap,
+    state: &mut JsonState,
+    label: &str,
+    raw: &str,
+) {
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            let id = ui.make_persistent_id(("json-node", steps.as_slice()));
+            let mut collapsing =
+                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+            if state.reveal.iter().any(|ancestor| ancestor.as_slice() == steps.as_slice()) {
+                collapsing.set_open(true);
+            }
+            let header = collapsing.show_header(ui, |ui| {
+                ui.label(format!("{label}  {{{}}}", map.len())).on_hover_text(raw);
+            });
+            header.body(|ui| {
+                for (key, child) in map {
+                    steps.push(RawStep::Key(key.clone()));
+                    let child_label = keys.readable_for(key).unwrap_or(key).to_string();
+                    json_child(ui, child, steps, keys, state, &child_label, key);
+                    steps.pop();
+                }
+            });
+        }
+        Value::Array(items) if !items.is_empty() => {
+            let id = ui.make_persistent_id(("json-node", steps.as_slice()));
+            let mut collapsing =
+                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+            if state.reveal.iter().any(|ancestor| ancestor.as_slice() == steps.as_slice()) {
+                collapsing.set_open(true);
+            }
+            let header = collapsing.show_header(ui, |ui| {
+                ui.label(format!("{label}  [{}]", items.len())).on_hover_text(raw);
+            });
+            header.body(|ui| {
+                for (index, child) in items.iter().enumerate() {
+                    steps.push(RawStep::Index(index));
+                    let child_label = format!("[{index}]");
+                    json_child(ui, child, steps, keys, state, &child_label, &child_label);
+                    steps.pop();
+                }
+            });
+        }
+        _ => {
+            let selected = state.selected.as_deref() == Some(steps.as_slice());
+            let response = ui.selectable_label(selected, format!("{label}: {}", json_summary(value)));
+            if response.clicked() {
+                state.select(steps, value);
+            }
+            response.on_hover_text(raw);
+        }
+    }
+}
+
+/// The editor for the selected node: a control that matches the value's kind.
+fn json_editor(
+    ui: &mut egui::Ui,
+    open: &OpenSave,
+    keys: &KeyMap,
+    state: &mut JsonState,
+    editable: bool,
+) -> Option<Action> {
+    let Some(steps) = state.selected.clone() else {
+        ui.label(RichText::new("Click a value in the tree, or search for one.").weak());
+        return None;
+    };
+    let Some(value) = open.value_at(&steps).cloned() else {
+        ui.label(RichText::new("That field is no longer in the document.").weak());
+        return None;
+    };
+    let kind = JsonKind::of(&value);
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Path").small().strong());
+        ui.label(RichText::new(describe_raw_path(&steps, keys)).monospace());
+        if let Some(RawStep::Key(raw)) = steps.last() {
+            ui.label(RichText::new(format!("on-disk key {raw:?}")).small().weak());
+        }
+    });
+
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(kind.label()).small().strong());
+        match kind {
+            JsonKind::String => {
+                ui.add(egui::TextEdit::singleline(&mut state.edit_text).desired_width(420.0));
+                if editable && ui.button("Set").clicked() {
+                    let value = Value::String(state.edit_text.clone());
+                    action = Some(Action::SetField { steps: steps.clone(), value });
+                }
+            }
+            JsonKind::Number => {
+                ui.add(egui::TextEdit::singleline(&mut state.edit_text).desired_width(220.0));
+                let number = serde_json::from_str::<Value>(&state.edit_text)
+                    .ok()
+                    .filter(Value::is_number);
+                if number.is_none() {
+                    ui.label(RichText::new("not a number").small().color(Color32::from_rgb(206, 84, 84)));
+                }
+                if ui.add_enabled(editable && number.is_some(), egui::Button::new("Set")).clicked() {
+                    if let Some(number) = number {
+                        action = Some(Action::SetField { steps: steps.clone(), value: number });
+                    }
+                }
+            }
+            JsonKind::Bool => {
+                let text = if state.edit_bool { "true" } else { "false" };
+                ui.checkbox(&mut state.edit_bool, text);
+                if editable && ui.button("Set").clicked() {
+                    let value = Value::Bool(state.edit_bool);
+                    action = Some(Action::SetField { steps: steps.clone(), value });
+                }
+            }
+            JsonKind::Null => {
+                ui.label(RichText::new("null").weak());
+                ui.label(RichText::new("(a null field is left alone here)").small().weak());
+            }
+            JsonKind::Array | JsonKind::Object => {
+                ui.label(RichText::new(json_summary(&value)).weak());
+                ui.label(RichText::new("(containers are shown, not replaced)").small().weak());
+            }
+        }
+    });
+    action
+}
+
 fn fact(ui: &mut egui::Ui, name: &str, value: Option<String>) {
     ui.label(name);
     match value {
@@ -1226,6 +1616,60 @@ mod tests {
         let mut app = EditorApp::from_session(Session::empty());
         let text = drawn_text(&mut app);
         assert!(text.contains("No save open"), "expected the empty-state hint:\n{text}");
+    }
+
+    #[test]
+    fn the_json_tab_draws_the_tree_and_finds_a_value() {
+        let dir = scratch("json-tab");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Json;
+
+        let text = drawn_text(&mut app);
+        for expected in ["JSON", "Find", "BaseContext", "Version: 4743"] {
+            assert!(text.contains(expected), "the JSON tab should draw {expected:?}:\n{text}");
+        }
+
+        // Search runs on the button or Enter, so drive it directly here.
+        app.json.filter = "Units".to_string();
+        app.json.search(&app.session);
+        assert_eq!(app.json.hits.len(), 1, "one Units field");
+        let text = drawn_text(&mut app);
+        assert!(
+            text.contains("BaseContext.PlayerStateData.Units"),
+            "the hit list should show the path:\n{text}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_json_edit_stages_and_marks_the_save() {
+        let dir = scratch("json-edit");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Json;
+
+        let steps = vec![
+            RawStep::Key("BaseContext".to_string()),
+            RawStep::Key("PlayerStateData".to_string()),
+            RawStep::Key("Units".to_string()),
+        ];
+        let value = app.session.open.as_ref().expect("open").value_at(&steps).cloned().expect("Units");
+        app.json.select(&steps, &value);
+
+        let text = drawn_text(&mut app);
+        for expected in ["Path", "BaseContext.PlayerStateData.Units", "1200", "Set"] {
+            assert!(text.contains(expected), "the editor should draw {expected:?}:\n{text}");
+        }
+
+        app.apply(Action::SetField { steps: steps.clone(), value: Value::from(7777) });
+        assert!(app.session.dirty());
+        let open = app.session.open.as_ref().expect("open");
+        assert_eq!(open.value_at(&steps).and_then(Value::as_i64), Some(7777));
+        assert_eq!(open.currencies.expect("currencies").units, 7777);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -176,6 +176,104 @@ impl Document {
         }
         count(&self.tree)
     }
+
+    /// Read a value by exact on-disk path.
+    pub fn get_raw(&self, steps: &[RawStep]) -> Option<&Value> {
+        let mut current = &self.tree;
+        for step in steps {
+            current = match step {
+                RawStep::Key(key) => current.as_object()?.get(key)?,
+                RawStep::Index(index) => current.as_array()?.get(*index)?,
+            };
+        }
+        Some(current)
+    }
+
+    /// Replace a value by exact on-disk path.
+    ///
+    /// Unlike [`Document::set_path`] nothing is created: the path must already
+    /// resolve, so a typo cannot add a field the game does not expect. The path
+    /// is checked on the immutable view first, so a refused set leaves the
+    /// document clean.
+    pub fn set_raw(&mut self, steps: &[RawStep], value: Value) -> Result<(), PathError> {
+        if self.get_raw(steps).is_none() {
+            return Err(PathError::NotFound(raw_path_text(steps)));
+        }
+        let mut current = self.tree_raw_mut();
+        for step in steps {
+            current = step_mut(current, step).expect("the path was resolved on the immutable view");
+        }
+        *current = value;
+        self.mark_dirty();
+        Ok(())
+    }
+}
+
+/// One step of an exact on-disk path: an object key or an array index.
+///
+/// A readable path resolves names through the key map, which is ambiguous when
+/// two on-disk keys share a readable name (the community mapping contains such
+/// pairs). A raw path never consults the map, so it addresses exactly the node
+/// it was built from; the JSON view builds one per node as it walks the tree.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RawStep {
+    /// An object member, by its exact on-disk key.
+    Key(String),
+    /// An array element, by index.
+    Index(usize),
+}
+
+/// One step down a mutable tree, for a path that was already resolved.
+fn step_mut<'a>(value: &'a mut Value, step: &RawStep) -> Option<&'a mut Value> {
+    match step {
+        RawStep::Key(key) => value.as_object_mut()?.get_mut(key),
+        RawStep::Index(index) => value.as_array_mut()?.get_mut(*index),
+    }
+}
+
+/// Render an on-disk path with readable names where the map knows one.
+///
+/// Display only: the value is still addressed by its raw steps, so duplicate
+/// readable names cannot make the path ambiguous.
+pub fn describe_raw_path(steps: &[RawStep], keys: &KeyMap) -> String {
+    let mut out = String::new();
+    for step in steps {
+        match step {
+            RawStep::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(keys.readable_for(key).unwrap_or(key));
+            }
+            RawStep::Index(index) => {
+                out.push('[');
+                out.push_str(&index.to_string());
+                out.push(']');
+            }
+        }
+    }
+    out
+}
+
+/// The same path with the on-disk key spelling, for error messages.
+fn raw_path_text(steps: &[RawStep]) -> String {
+    let mut out = String::new();
+    for step in steps {
+        match step {
+            RawStep::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            RawStep::Index(index) => {
+                out.push('[');
+                out.push_str(&index.to_string());
+                out.push(']');
+            }
+        }
+    }
+    out
 }
 
 /// Errors from resolving or creating a path inside a document.
@@ -703,5 +801,53 @@ mod tests {
         assert_eq!(readable["CommonStateData"]["SaveName"], "");
         // An unmapped key keeps its on-disk spelling so nothing is lost.
         assert!(readable.get("Ps4").is_some(), "unmapped keys must survive the export");
+    }
+
+    #[test]
+    fn raw_paths_address_the_exact_on_disk_node() {
+        let mut doc = obfuscated_document();
+        let keys = KeyMap::builtin();
+
+        let steps = [
+            RawStep::Key("Ps4".to_string()),
+            RawStep::Index(1),
+            RawStep::Key("b2n".to_string()),
+        ];
+        assert_eq!(doc.get_raw(&steps).and_then(Value::as_str), Some("B"));
+
+        doc.set_raw(&steps, Value::from("Z")).unwrap();
+        assert!(doc.is_dirty());
+        let text = latin1::decode(&doc.payload().unwrap());
+        assert!(text.contains("\"Ps4\":[{\"b2n\":\"A\"},{\"b2n\":\"Z\"}]"), "{text}");
+
+        // A raw path does not consult the map: the readable name must not resolve.
+        assert!(doc.get_raw(&[RawStep::Key("Version".to_string())]).is_none());
+        assert_eq!(
+            describe_raw_path(&steps, &keys),
+            "Ps4[1].b2n",
+            "display names come from the map, the address stays raw"
+        );
+    }
+
+    #[test]
+    fn a_raw_set_refuses_a_missing_path_without_dirtying() {
+        let mut doc = obfuscated_document();
+        let missing = [
+            RawStep::Key("<h0".to_string()),
+            RawStep::Key("Nope".to_string()),
+        ];
+        let err = doc.set_raw(&missing, Value::from(1)).unwrap_err();
+        assert!(matches!(err, PathError::NotFound(_)), "got {err:?}");
+        assert!(!doc.is_dirty(), "a refused set must leave the document clean");
+
+        // An index on an object, or a key on an array, is refused the same way.
+        let wrong = [RawStep::Index(0)];
+        assert!(doc.set_raw(&wrong, Value::from(1)).is_err());
+        let through_scalar = [
+            RawStep::Key("F2P".to_string()),
+            RawStep::Key("Deep".to_string()),
+        ];
+        assert!(doc.set_raw(&through_scalar, Value::from(1)).is_err());
+        assert!(!doc.is_dirty());
     }
 }
