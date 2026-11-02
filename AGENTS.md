@@ -61,6 +61,16 @@ edited.** Concretely:
 If a change would relax any of these, stop and raise it with the user first.
 Any new write path needs a fixture test proving untouched data is byte-identical.
 
+Two more rules the code enforces, not just documents:
+
+* **A write is verified before it happens.** `SaveBundle::commit` decodes and
+  parses its own planned bytes and refuses to write if they do not read back.
+  Do not add a path to disk that skips it — it is the only thing standing
+  between an encoder bug and a save the game cannot open.
+* **Backups are a write too.** Pinning, deleting or restoring an archive goes
+  through `check_write`, so the live-folder guard covers them; the CLI's
+  `backups --pin/--remove`, the GUI's buttons and the MCP tools all agree.
+
 ## Conventions
 
 * Crates: `nms-format` (bytes), `nms-model` (documents, paths, change reports),
