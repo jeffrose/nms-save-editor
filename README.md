@@ -338,6 +338,10 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |
 
+The window's route to feature parity with the original editor — its fourteen
+tabs and three dialogs, mapped to this project's edit layer — is planned in
+[`docs/plan-gui-parity.md`](docs/plan-gui-parity.md).
+
 ## Licence and provenance
 
 MIT OR Apache-2.0.
