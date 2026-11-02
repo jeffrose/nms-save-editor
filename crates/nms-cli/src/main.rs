@@ -36,9 +36,12 @@ USAGE:
                                            restore an archive (replaced files are
                                            themselves backed up first)
     nmsedit verify <save-dir>              round-trip every file and report fidelity
-    nmsedit mapping <mapping.json>         load a community key mapping and report it
+    nmsedit mapping <mapping.json>         load a key mapping and report it (the
+                                           community file, or one derived with
+                                           `data mapping`)
 
-PLAYER (readable field names need a community key mapping, see --mapping):
+PLAYER (readable field names need a key mapping — `nmsedit data refresh`
+derives one from your own game; --mapping overrides it):
     nmsedit currencies <save.hg>           show units, nanites and quicksilver
     nmsedit currency <save.hg> <name> <value>
                                            set one balance (units, nanites or
@@ -98,7 +101,8 @@ OPTIONS:
     --language <code>      language to read from the game (default: english)
     --mapping <file>       key mapping file to extend the built-in map
                            (default: $NMSEDIT_MAPPING, then
-                           $XDG_CONFIG_HOME/nmsedit/mapping.json)
+                           $XDG_CONFIG_HOME/nmsedit/mapping.json; `data
+                           refresh` derives that file from your game)
     -h, --help             show this help
 ";
 
@@ -420,7 +424,7 @@ fn inventory_or_error(bundle: &SaveBundle, name: &str) -> Result<Inventory, Stri
     let available: Vec<String> = bundle.inventories().iter().map(|inventory| inventory.path.label().to_string()).collect();
     if available.is_empty() {
         return Err(format!(
-            "no inventory named {name:?}: this save has no readable inventories\nnote: inventory fields need the community key mapping; see --mapping"
+            "no inventory named {name:?}: this save has no readable inventories\nnote: inventory fields need a key mapping; run `nmsedit data refresh` to derive one, or pass --mapping"
         ));
     }
     let shown: Vec<String> = available.iter().take(20).cloned().collect();
@@ -516,7 +520,7 @@ fn cmd_inventories(args: &[String]) -> Result<(), String> {
     let inventories = bundle.inventories();
     if inventories.is_empty() {
         return Err(
-            "this save has no readable inventories\nnote: inventory fields need the community key mapping; see --mapping"
+            "this save has no readable inventories\nnote: inventory fields need a key mapping; run `nmsedit data refresh` to derive one, or pass --mapping"
                 .to_string(),
         );
     }
@@ -1331,8 +1335,49 @@ fn cmd_data_refresh(args: &[String]) -> Result<(), String> {
     );
     println!("wrote {} strings ({language}) to {}", pack.len(), out.display());
     println!("pack size       {size} bytes");
-    println!("nothing from the game is redistributed: the pack is built from your own install and stays here");
+
+    // The field-name mapping is derived from the same installation, so one
+    // command refreshes everything the editor knows about the game.
+    let mapping_out = mapping_output_path(args, &out);
+    println!();
+    match nms_data::write_mapping(&install.root, &mapping_out) {
+        Ok(mapping) => {
+            let existing = nms_data::read_mapping_pairs(&mapping_out).len();
+            println!("mapping         derived from the game's executable");
+            println!("names read      {}", mapping.report.names);
+            println!(
+                "keys resolved   {} ({} keys dropped as ambiguous)",
+                mapping.report.unique_keys, mapping.report.ambiguous_keys
+            );
+            if existing > 0 {
+                println!(
+                    "kept from file  {existing} entries ({} reproduced by the extraction, {} differ)",
+                    mapping.report.agreed, mapping.report.differed
+                );
+            }
+            println!("wrote           {} entries to {}", mapping.pairs.len(), mapping_out.display());
+        }
+        Err(error) => {
+            // A console install has no executable to read; the pack is still
+            // useful, so this is a note rather than a failure.
+            println!("mapping         skipped: {error}");
+        }
+    }
+    println!("nothing from the game is redistributed: the pack and the mapping are built from your own install and stay here");
     Ok(())
+}
+
+/// Where `data refresh` writes the mapping: the file the editor would load.
+fn mapping_output_path(args: &[String], pack: &Path) -> PathBuf {
+    if let Some(path) = option(args, "--mapping") {
+        return PathBuf::from(path);
+    }
+    if let Ok(value) = std::env::var("NMSEDIT_MAPPING") {
+        if !value.is_empty() {
+            return PathBuf::from(value);
+        }
+    }
+    pack.with_file_name("mapping.json")
 }
 
 /// Derive the save-key mapping from the game's own executable.
@@ -1348,9 +1393,9 @@ fn cmd_data_mapping(args: &[String]) -> Result<(), String> {
         default_mapping_path().unwrap_or_else(|| PathBuf::from("mapping.json"))
     });
     let binary = nms_data::find_game_binary(&install.root).map_err(|error| error.to_string())?;
+    let existing = nms_data::read_mapping_pairs(&out);
 
-    let existing = read_mapping_pairs(&out);
-    let mapping = nms_data::build_mapping(&install.root, &existing).map_err(|error| error.to_string())?;
+    let mapping = nms_data::write_mapping(&install.root, &out).map_err(|error| error.to_string())?;
 
     println!("installation    {}", install.root.display());
     println!("binary          {}", binary.display());
@@ -1367,39 +1412,9 @@ fn cmd_data_mapping(args: &[String]) -> Result<(), String> {
         );
     }
     println!("mapping         {} entries", mapping.pairs.len());
-
-    let json = mapping.to_json(&install.root, now_unix());
-    let text = serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?;
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-    }
-    std::fs::write(&out, text).map_err(|error| format!("{}: {error}", out.display()))?;
     println!("wrote           {}", out.display());
     println!("nothing from the game is redistributed: the mapping names fields, it does not carry game text");
     Ok(())
-}
-
-/// Read `{"Mapping": [{"Key": ..., "Value": ...}]}`, the shape both the
-/// community file and this generator write.
-fn read_mapping_pairs(path: &Path) -> std::collections::BTreeMap<String, String> {
-    let Ok(text) = std::fs::read_to_string(path) else { return std::collections::BTreeMap::new() };
-    let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return std::collections::BTreeMap::new();
-    };
-    document
-        .get("Mapping")
-        .and_then(|mapping| mapping.as_array())
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| {
-                    let key = entry.get("Key")?.as_str()?.to_string();
-                    let name = entry.get("Value")?.as_str()?.to_string();
-                    Some((key, name))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn cmd_data_info(args: &[String]) -> Result<(), String> {
@@ -1421,6 +1436,19 @@ fn cmd_data_info(args: &[String]) -> Result<(), String> {
     println!("categories      {}", summary.join(", "));
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     println!("file size       {size} bytes");
+
+    let mapping_path = mapping_output_path(args, &path);
+    let mapping = nms_data::read_mapping_pairs(&mapping_path);
+    if mapping.is_empty() {
+        println!("mapping         none at {} (run `nmsedit data refresh` to derive one)", mapping_path.display());
+    } else {
+        let source = std::fs::read_to_string(&mapping_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|document| document.get("generator").and_then(|value| value.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "community file".to_string());
+        println!("mapping         {} entries at {} ({source})", mapping.len(), mapping_path.display());
+    }
     Ok(())
 }
 

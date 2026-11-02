@@ -106,6 +106,59 @@ impl Mapping {
     }
 }
 
+/// Read `{"Mapping": [{"Key": ..., "Value": ...}]}`, the shape both the
+/// community file and this generator write. A missing or unreadable file reads
+/// as empty rather than failing: it is an input to a merge, not a requirement.
+pub fn read_mapping_pairs(path: &Path) -> BTreeMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(path) else { return BTreeMap::new() };
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return BTreeMap::new();
+    };
+    let Some(entries) = document.get("Mapping").and_then(|mapping| mapping.as_array()) else {
+        return BTreeMap::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.get("Key")?.as_str()?.to_string();
+            let name = entry.get("Value")?.as_str()?.to_string();
+            Some((key, name))
+        })
+        .collect()
+}
+
+/// Build the mapping from the installation and write it to `out`.
+///
+/// Whatever is already at `out` is read and merged in — its entries win — so
+/// refreshing never discards a maintained mapping, only extends it.
+pub fn write_mapping(install_root: &Path, out: &Path) -> Result<Mapping, DataError> {
+    let existing = read_mapping_pairs(out);
+    let mapping = build_mapping(install_root, &existing)?;
+    let json = mapping.to_json(install_root, now_unix());
+    let text = serde_json::to_string_pretty(&json).map_err(|error| DataError::Json {
+        message: error.to_string(),
+    })?;
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| DataError::Io {
+            context: "creating the mapping directory",
+            source,
+        })?;
+    }
+    std::fs::write(out, text).map_err(|source| DataError::Io {
+        context: "writing the mapping",
+        source,
+    })?;
+    Ok(mapping)
+}
+
+/// Seconds since the Unix epoch, for the `generated_at` field.
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|age| age.as_secs())
+        .unwrap_or(0)
+}
+
 /// Build a mapping from the field-name tables in the game's executable.
 ///
 /// `existing` is merged in and wins: what a maintained mapping already says is
@@ -511,6 +564,31 @@ mod tests {
         assert_eq!(mapping.pairs.get("Pk4").map(String::as_str), Some("TheMaintainedName"));
         assert_eq!(mapping.report.added, 0, "nothing to add: the key was already there");
         assert_eq!(mapping.report.differed, 1, "the extraction would have said something else");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writing_a_mapping_merges_what_is_already_there() {
+        let dir = std::env::temp_dir().join(format!("nms-data-mapping-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Binaries")).unwrap();
+        std::fs::write(dir.join("Binaries/NMS.exe"), b"SaveName\0Pk4\0Version\0F2P\0").unwrap();
+        let out = dir.join("mapping.json");
+        std::fs::write(
+            &out,
+            r#"{"Mapping":[{"Key":"Pk4","Value":"TheMaintainedName"},{"Key":"zzz","Value":"Kept"}]}"#,
+        )
+        .unwrap();
+
+        let mapping = write_mapping(&dir, &out).expect("write");
+        assert_eq!(mapping.pairs.get("Pk4").map(String::as_str), Some("TheMaintainedName"));
+        assert_eq!(mapping.pairs.get("F2P").map(String::as_str), Some("Version"));
+
+        // What was written reads back, and still holds both.
+        let reread = read_mapping_pairs(&out);
+        assert_eq!(reread.get("Pk4").map(String::as_str), Some("TheMaintainedName"));
+        assert_eq!(reread.get("F2P").map(String::as_str), Some("Version"));
+        assert_eq!(reread.get("zzz").map(String::as_str), Some("Kept"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

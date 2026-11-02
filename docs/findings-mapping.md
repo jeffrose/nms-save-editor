@@ -72,9 +72,57 @@ which is why an existing community mapping is merged in and wins, and why the
 command prints how many entries the extraction reproduced and how many differ
 (one, on the machine measured here).
 
+A second extraction rule was measured as well: requiring a name to sit in an
+8-byte-padded slot (the layout of the game's per-structure field tables) covers
+more of a save's keys — 734 against 714 — but produces one name that disagrees
+with the community mapping where the stricter scan produces none. The stricter
+scan is the one implemented, and the difference is left to the community file,
+which wins on merge anyway.
+
 So: the generator is a fallback that needs no third-party file, and a way to
 name fields the community file has not caught up with. It is not a replacement
 for a maintained mapping where one exists.
+
+## Why the mapping is generated, not shipped with the editor
+
+The pairs are not personal to anyone — they are facts about the game — so it is
+fair to ask why they are not simply committed to this repository. Three reasons,
+in order of weight:
+
+1. **They are derived from Hello Games' binary.** The names are the game's own
+   field names; this project's rule is that nothing derived from the game's
+   content is committed — no text tables, no icons, and no name lists. The pack
+   of 84,965 strings is regenerated locally for the same reason, and it is 8.5 MB
+   of derived data the player builds in a tenth of a second.
+2. **The community file is a third party's artifact.** `mapping.json` ships with
+   MBINCompiler under its own licence; copying it into an MIT/Apache-2.0
+   repository would be a licence problem regardless of the first point.
+3. **A shipped list is the bug, not the fix.** Every "name mapping not found"
+   issue in the older editor's tracker is a shipped list meeting a game update.
+   A file the player regenerates is never behind the game they are running.
+
+What that means in practice is *not* that the user installs a file. `nmsedit data
+refresh` — the one command the README asks for after installing the editor —
+derives the text pack, the item names **and** the mapping from the local
+installation:
+
+```console
+$ nmsedit data refresh
+...
+items           7957 named (5373 derived from text keys)
+wrote 84965 strings (english) to ~/.config/nmsedit/strings.json
+
+mapping         derived from the game's executable
+names read      76550
+keys resolved   59907 (7985 keys dropped as ambiguous)
+wrote           60260 entries to ~/.config/nmsedit/mapping.json
+```
+
+The file lives next to the pack because it is the same kind of thing: derived
+data, regenerated at will, never committed. The ~20 pairs compiled into the
+editor (`KeyMap::builtin`) stay, because a save must show its version, platform,
+save name and play time even on a machine with no game installed; everything
+beyond that is derived.
 
 ## Reproducing it
 

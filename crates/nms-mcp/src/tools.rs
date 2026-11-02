@@ -93,7 +93,8 @@ pub fn definitions() -> Vec<Value> {
             "get_field",
             "Read any field by readable, dotted path, for example CommonStateData.SaveName or \
              PlayerStateData.Inventory[3].b2n. Array indices go in brackets. Readable names come \
-             from the community key mapping; on-disk keys work too.",
+             from the key mapping (the community file, or one derived from the game \
+             with `nmsedit data refresh`); on-disk keys work too.",
             json!({
                 "save": save_prop(),
                 "path": string_prop("Dotted field path"),
@@ -364,8 +365,8 @@ fn ensure_mapping(server: &Server) -> Result<(), String> {
     if server.mapping.is_some() {
         return Ok(());
     }
-    Err("this needs the community key mapping: set NMSEDIT_MAPPING or install \
-         ~/.config/nmsedit/mapping.json (the editor never guesses field names)"
+    Err("this needs the key mapping: run `nmsedit data refresh` to derive one from your own \
+         game, or set NMSEDIT_MAPPING (the editor never guesses field names)"
         .to_string())
 }
 
@@ -1201,7 +1202,7 @@ mod tests {
             "read_currencies",
             json!({ "save": save.display().to_string() }),
         );
-        assert!(error.contains("community key mapping"), "{error}");
+        assert!(error.contains("data refresh"), "{error}");
     }
 
     #[test]

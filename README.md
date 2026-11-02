@@ -58,7 +58,7 @@ storage slot    2 (PlayerState1)
 | `nmsedit backups <dir>` | list backups with the state each holds, and manage them (`--pin`, `--unpin`, `--remove`, `--prune`) |
 | `nmsedit restore <zip> --to <dir>` | restore a backup (replaced files are backed up first) |
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
-| `nmsedit mapping <mapping.json>` | load a community key mapping |
+| `nmsedit mapping <mapping.json>` | load a key mapping and report it |
 | `nmsedit data refresh` | reread the game's archives and rebuild the local data pack |
 | `nmsedit data info` | show the installed data pack |
 | `nmsedit data lookup <id>` | print game text by id |

@@ -387,7 +387,7 @@ fn every_inventory_obeys_the_games_own_rules() {
         return;
     };
     let Some(keys) = full_keys() else {
-        eprintln!("skipping: no community mapping (set NMSEDIT_MAPPING or install ~/.config/nmsedit/mapping.json)");
+        eprintln!("skipping: no community mapping (set NMSEDIT_MAPPING, or run `nmsedit data refresh`)");
         return;
     };
 

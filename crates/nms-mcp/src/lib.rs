@@ -46,8 +46,9 @@ into the account. list_backups shows the state each backup holds, and \
 pin_backup keeps a known-good one out of pruning. Balances (units, nanites, \
 quicksilver) are currencies: use set_currency, not add_item. Item ids are the \
 game's own ids such as ^CARBON; search_items resolves a name to an id. \
-Inventories and learned lists need the community key mapping, and item names \
-need a data pack; the tools say so when one is missing.";
+Inventories and learned lists need the key mapping, and item names need a data \
+pack; both are derived from the player's own game by `nmsedit data refresh` on \
+that machine, and the tools say so when one is missing.";
 
 /// A protocol-level failure, as JSON-RPC wants them.
 ///
@@ -103,7 +104,7 @@ impl Server {
         Server { keys, pack, mapping }
     }
 
-    /// Where the community key mapping was loaded from, if anywhere.
+    /// Where the key mapping was loaded from, if anywhere.
     pub fn mapping(&self) -> Option<&std::path::Path> {
         self.mapping.as_deref()
     }

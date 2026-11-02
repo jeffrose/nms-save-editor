@@ -875,8 +875,8 @@ fn default_key_map() -> Result<KeyMap, String> {
             let loaded = KeyMap::load(&path).map_err(|e| format!("mapping {}: {e}", path.display()))?;
             Ok(KeyMap::builtin().extended_with(&loaded))
         }
-        _ => Err("no community key mapping found; field and inventory names will be limited \
-                  (set NMSEDIT_MAPPING or install ~/.config/nmsedit/mapping.json)"
+        _ => Err("no key mapping found; field and inventory names will be limited \
+                  (run `nmsedit data refresh` to derive one from your game, or set NMSEDIT_MAPPING)"
             .to_string()),
     }
 }
@@ -1389,7 +1389,7 @@ mod tests {
         };
         let Some(keys) = fixture_keys() else {
             eprintln!(
-                "skipping: no community mapping (set NMSEDIT_MAPPING or install ~/.config/nmsedit/mapping.json)"
+                "skipping: no community mapping (set NMSEDIT_MAPPING, or run `nmsedit data refresh`)"
             );
             return;
         };

@@ -93,14 +93,19 @@ jobs:
             Native binaries for Linux, Windows and macOS: `nmsedit` (the CLI and
             MCP server) and `nmsedit-gui` (the window). No Java runtime.
 
-            **First run.** The editor needs two files it cannot ship: the
-            community key mapping, and a data pack generated from your own game
-            installation (the game's text is not distributed here). Point
-            `NMSEDIT_MAPPING` at the mapping file, and run:
+            **First run.** Run one command:
 
             ```sh
             nmsedit data refresh
             ```
+
+            It reads your own installation and derives everything the editor
+            knows about the game: the text and item-name pack, and the field-name
+            mapping (the readable names live in the game's executable, and the
+            obfuscated key is a hash of the name). Nothing from the game is
+            distributed here, and nothing needs to be downloaded by hand. A
+            community mapping at `~/.config/nmsedit/mapping.json`, if you have
+            one, is merged in and wins.
 
             **Safety.** An unedited save is never rewritten, every write takes a
             timestamped zip backup first, and the game's live save folder is
