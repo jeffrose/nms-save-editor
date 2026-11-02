@@ -6,6 +6,7 @@
 //! byte-identical** — for the data files, for the metadata files, and for the
 //! JSON document layer.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use nms_format::metadata::{Metadata, Slot};
@@ -263,6 +264,106 @@ fn edited_save_keeps_untouched_number_text() {
     assert_eq!(changed, 0, "editing must not rewrite untouched numeric literals ({changed} changed)");
     assert!(same > 10_000, "expected most literals to be compared, only {same}");
     assert!(edited_text.contains("NmsEditProbe"), "the edit itself must be present");
+}
+
+/// The compiled-in baseline is what a user gets before running `data refresh`,
+/// so it must name the bulk of what real saves use — and it must never
+/// disagree with an installed community mapping, which is maintained
+/// independently of our derivation.
+///
+/// The 70% floor sits below the measured coverage (76% when the committed file
+/// was generated from these fixtures) on purpose: the exact number depends on
+/// which saves are installed, and adding saves to `fixtures/` should not break
+/// the suite — it should prompt a regeneration, which
+/// `tools/build-baseline-mapping.sh` does.
+#[test]
+fn the_builtin_baseline_names_real_saves() {
+    let Some(root) = fixtures_root() else {
+        eprintln!("skipping: no fixtures/ directory");
+        return;
+    };
+    let builtin = KeyMap::builtin();
+    let mut all_keys = BTreeSet::new();
+    let mut checked = 0usize;
+    for dir in account_dirs(&root) {
+        for path in hg_files(&dir) {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let Some(slot) = Slot::from_file_name(&name) else { continue };
+            if slot.player_number().is_none() {
+                continue;
+            }
+            let raw = std::fs::read(&path).unwrap();
+            let save = SaveFile::from_bytes(&raw).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let doc = Document::parse(&save.payload).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            collect_json_keys(doc.tree(), &mut all_keys);
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no player saves found under {}", root.display());
+
+    let named = all_keys.iter().filter(|key| builtin.readable_for(key).is_some()).count();
+    let percent = named * 100 / all_keys.len().max(1);
+    eprintln!("built-in baseline names {named}/{} keys ({percent}%) across {checked} player saves", all_keys.len());
+    assert!(
+        percent >= 70,
+        "the built-in baseline names only {percent}% of the keys real saves use; \
+         regenerate it with tools/build-baseline-mapping.sh"
+    );
+
+    let Some(community) = community_mapping() else {
+        eprintln!("no community mapping installed; skipping the cross-check");
+        return;
+    };
+    let mut compared = 0usize;
+    let mut disagreements = Vec::new();
+    for key in &all_keys {
+        let (Some(ours), Some(theirs)) = (builtin.readable_for(key), community.readable_for(key)) else {
+            continue;
+        };
+        compared += 1;
+        if ours != theirs {
+            disagreements.push(format!("{key}: built-in says {ours:?}, the community file says {theirs:?}"));
+        }
+    }
+    assert!(
+        disagreements.is_empty(),
+        "the built-in baseline disagrees with the community mapping:\n{}",
+        disagreements.join("\n")
+    );
+    eprintln!("cross-checked {compared} keys against the community mapping");
+}
+
+/// The community mapping, when one is installed, for cross-checking.
+fn community_mapping() -> Option<KeyMap> {
+    let path = std::env::var("NMSEDIT_MAPPING")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let base = match std::env::var("XDG_CONFIG_HOME") {
+                Ok(value) if !value.is_empty() => PathBuf::from(value),
+                _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
+            };
+            Some(base.join("nmsedit").join("mapping.json"))
+        })?;
+    KeyMap::load(&path).ok()
+}
+
+fn collect_json_keys(value: &serde_json::Value, keys: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                keys.insert(key.clone());
+                collect_json_keys(child, keys);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_json_keys(item, keys);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Extract numeric literals, ignoring digits inside strings. Approximate but

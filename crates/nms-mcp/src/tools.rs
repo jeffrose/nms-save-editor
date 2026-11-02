@@ -357,16 +357,18 @@ fn load(server: &Server, save: &str) -> Result<SaveBundle, String> {
     SaveBundle::load(&path, server.keys.clone()).map_err(|error| error.to_string())
 }
 
-/// Refuse tools that only make sense with the community key mapping.
+/// Refuse tools that only make sense with the full key mapping.
 ///
-/// Without it a real save's field keys cannot be resolved, and the operation
-/// would fail with a much less helpful message.
+/// The built-in baseline names the common fields, but these tools edit
+/// balances and learned lists whose keys the derivation cannot resolve on its
+/// own; without a full mapping they would fail with a much less helpful
+/// message.
 fn ensure_mapping(server: &Server) -> Result<(), String> {
     if server.mapping.is_some() {
         return Ok(());
     }
-    Err("this needs the key mapping: run `nmsedit data refresh` to derive one from your own \
-         game, or set NMSEDIT_MAPPING (the editor never guesses field names)"
+    Err("this needs the full key mapping: run `nmsedit data refresh` to derive one from your own \
+         game, or set NMSEDIT_MAPPING (the built-in baseline does not name every field)"
         .to_string())
 }
 

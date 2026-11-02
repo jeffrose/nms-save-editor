@@ -875,8 +875,8 @@ fn default_key_map() -> Result<KeyMap, String> {
             let loaded = KeyMap::load(&path).map_err(|e| format!("mapping {}: {e}", path.display()))?;
             Ok(KeyMap::builtin().extended_with(&loaded))
         }
-        _ => Err("no key mapping found; field and inventory names will be limited \
-                  (run `nmsedit data refresh` to derive one from your game, or set NMSEDIT_MAPPING)"
+        _ => Err("no full key mapping found; using the built-in baseline \
+                  (run `nmsedit data refresh` to derive the full mapping from your game, or set NMSEDIT_MAPPING)"
             .to_string()),
     }
 }

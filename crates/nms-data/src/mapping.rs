@@ -29,7 +29,7 @@
 //! unnamed field shows its id, which is worse than a name but better than a
 //! wrong one.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::DataError;
@@ -89,20 +89,36 @@ impl Mapping {
     /// The `libMBIN_version` field is kept because that is the shape the
     /// community file has; `generator` says where this one came from.
     pub fn to_json(&self, game_root: &Path, generated_at: u64) -> serde_json::Value {
+        self.json(game_root.display().to_string(), Some(generated_at))
+    }
+
+    /// The pairs as JSON without a timestamp or a machine path.
+    ///
+    /// This is the shape of the baseline committed to the repository: the same
+    /// installation must produce the same bytes, so nothing machine-specific
+    /// goes into the file.
+    pub fn to_stable_json(&self, source: &str) -> serde_json::Value {
+        self.json(source.to_string(), None)
+    }
+
+    fn json(&self, source: String, generated_at: Option<u64>) -> serde_json::Value {
         let mapping: Vec<serde_json::Value> = self
             .pairs
             .iter()
             .map(|(key, name)| serde_json::json!({ "Key": key, "Value": name }))
             .collect();
-        serde_json::json!({
+        let mut document = serde_json::json!({
             "libMBIN_version": "nmsedit",
             "generator": "nmsedit",
-            "source": game_root.display().to_string(),
-            "generated_at": generated_at,
+            "source": source,
             "names_read": self.report.names,
             "ambiguous_keys_dropped": self.report.ambiguous_keys,
             "Mapping": mapping,
-        })
+        });
+        if let Some(generated_at) = generated_at {
+            document["generated_at"] = serde_json::json!(generated_at);
+        }
+        document
     }
 }
 
@@ -134,8 +150,30 @@ pub fn read_mapping_pairs(path: &Path) -> BTreeMap<String, String> {
 pub fn write_mapping(install_root: &Path, out: &Path) -> Result<Mapping, DataError> {
     let existing = read_mapping_pairs(out);
     let mapping = build_mapping(install_root, &existing)?;
-    let json = mapping.to_json(install_root, now_unix());
-    let text = serde_json::to_string_pretty(&json).map_err(|error| DataError::Json {
+    write_json(out, &mapping.to_json(install_root, now_unix()))?;
+    Ok(mapping)
+}
+
+/// Build a mapping covering only `keys` and write it to `out`.
+///
+/// This is how the baseline compiled into the editor is produced: every key a
+/// set of real saves uses, resolved from the game's executable. Unlike
+/// [`write_mapping`], nothing at `out` is read first — the file holds exactly
+/// the scope asked for, and the same installation produces the same bytes.
+pub fn write_mapping_for_keys(
+    install_root: &Path,
+    keys: &BTreeSet<String>,
+    out: &Path,
+) -> Result<Mapping, DataError> {
+    let mapping = mapping_for_keys(install_root, keys)?;
+    let source = "the field-name tables in the game's executable, limited to keys real saves use";
+    write_json(out, &mapping.to_stable_json(source))?;
+    Ok(mapping)
+}
+
+/// Write a mapping document where it belongs, creating the directory.
+fn write_json(out: &Path, json: &serde_json::Value) -> Result<(), DataError> {
+    let text = serde_json::to_string_pretty(json).map_err(|error| DataError::Json {
         message: error.to_string(),
     })?;
     if let Some(parent) = out.parent() {
@@ -144,11 +182,13 @@ pub fn write_mapping(install_root: &Path, out: &Path) -> Result<Mapping, DataErr
             source,
         })?;
     }
-    std::fs::write(out, text).map_err(|source| DataError::Io {
+    // The trailing newline is for the committed baseline: it is a tracked text
+    // file, and git prefers a newline-terminated one.
+    std::fs::write(out, text + "\n").map_err(|source| DataError::Io {
         context: "writing the mapping",
         source,
     })?;
-    Ok(mapping)
+    Ok(())
 }
 
 /// Seconds since the Unix epoch, for the `generated_at` field.
@@ -164,6 +204,27 @@ fn now_unix() -> u64 {
 /// `existing` is merged in and wins: what a maintained mapping already says is
 /// never overridden by an extraction, only extended with keys it lacks.
 pub fn build_mapping(install_root: &Path, existing: &BTreeMap<String, String>) -> Result<Mapping, DataError> {
+    build(install_root, existing, None)
+}
+
+/// Build a mapping covering only `keys`.
+///
+/// This is how the baseline that ships inside the editor is produced: every key
+/// a set of real saves uses, resolved from the game's executable, so the file
+/// stays around a thousand entries rather than sixty thousand.
+pub fn mapping_for_keys(
+    install_root: &Path,
+    keys: &BTreeSet<String>,
+) -> Result<Mapping, DataError> {
+    build(install_root, &BTreeMap::new(), Some(keys))
+}
+
+/// The scan behind both: names out of the executable, one candidate per key.
+fn build(
+    install_root: &Path,
+    existing: &BTreeMap<String, String>,
+    scope: Option<&BTreeSet<String>>,
+) -> Result<Mapping, DataError> {
     let exe = find_game_binary(install_root)?;
     let bytes = std::fs::read(&exe).map_err(|source| DataError::Io {
         context: "reading the game executable",
@@ -178,6 +239,9 @@ pub fn build_mapping(install_root: &Path, existing: &BTreeMap<String, String>) -
     let mut by_key: HashMap<String, Option<&str>> = HashMap::new();
     for name in &names {
         let key = key_for_name(name);
+        if scope.is_some_and(|scope| !scope.contains(&key)) {
+            continue;
+        }
         match by_key.get_mut(&key) {
             None => {
                 by_key.insert(key, Some(name.as_str()));
@@ -589,6 +653,38 @@ mod tests {
         assert_eq!(reread.get("Pk4").map(String::as_str), Some("TheMaintainedName"));
         assert_eq!(reread.get("F2P").map(String::as_str), Some("Version"));
         assert_eq!(reread.get("zzz").map(String::as_str), Some("Kept"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_scoped_mapping_holds_only_the_scope_and_is_stable() {
+        let dir = std::env::temp_dir().join(format!("nms-data-mapping-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Binaries")).unwrap();
+        // `Pk4` resolves; `q9a` is shared by two names and must be dropped even
+        // though the scope asks for it; `>Qh` is out of scope.
+        std::fs::write(
+            dir.join("Binaries/NMS.exe"),
+            b"SaveName\0Pk4\0DM\0Aabb4BytesTree\0X\0>Qh\0",
+        )
+        .unwrap();
+        let scope = BTreeSet::from(["Pk4".to_string(), "q9a".to_string(), "zzz".to_string()]);
+        let out = dir.join("baseline.json");
+
+        let mapping = write_mapping_for_keys(&dir, &scope, &out).expect("write");
+        assert_eq!(mapping.pairs.get("Pk4").map(String::as_str), Some("SaveName"));
+        assert!(!mapping.pairs.contains_key("q9a"), "an ambiguous in-scope key is dropped");
+        assert!(!mapping.pairs.contains_key("zzz"), "a key with no candidate is dropped");
+        assert!(!mapping.pairs.contains_key(">Qh"), "out-of-scope keys are not written");
+        assert_eq!(mapping.report.unique_keys, 1);
+        assert_eq!(mapping.report.ambiguous_keys, 1);
+
+        // Nothing machine-specific goes in the file, so writing it again from
+        // the same executable produces identical bytes.
+        let first = std::fs::read_to_string(&out).unwrap();
+        write_mapping_for_keys(&dir, &scope, &out).expect("rewrite");
+        assert_eq!(first, std::fs::read_to_string(&out).unwrap(), "the baseline must be byte-stable");
+        assert!(!first.contains("generated_at"), "a committed baseline carries no timestamp");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

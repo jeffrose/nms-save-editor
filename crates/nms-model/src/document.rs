@@ -741,8 +741,12 @@ mod tests {
     }
 
     /// A document with the obfuscated on-disk spelling, plus an array.
+    ///
+    /// `NmsEditUnmapped` is deliberately not key-shaped: every real key is
+    /// three characters, so no mapping can name it and the tests that check
+    /// unmapped keys have something stable to point at.
     fn obfuscated_document() -> Document {
-        let payload = b"{\"F2P\":4743,\"<h0\":{\"Pk4\":\"\"},\"Ps4\":[{\"b2n\":\"A\"},{\"b2n\":\"B\"}]}";
+        let payload = b"{\"F2P\":4743,\"<h0\":{\"Pk4\":\"\"},\"Ps4\":[{\"b2n\":\"A\"},{\"b2n\":\"B\"}],\"NmsEditUnmapped\":1}";
         Document::parse(payload).unwrap()
     }
 
@@ -799,8 +803,10 @@ mod tests {
         let readable = doc.readable(&keys);
         assert_eq!(readable["Version"], 4743);
         assert_eq!(readable["CommonStateData"]["SaveName"], "");
+        // The baseline names these too, so they take their readable spelling.
+        assert_eq!(readable["MatrixAt"][1]["Id"], "B");
         // An unmapped key keeps its on-disk spelling so nothing is lost.
-        assert!(readable.get("Ps4").is_some(), "unmapped keys must survive the export");
+        assert!(readable.get("NmsEditUnmapped").is_some(), "unmapped keys must survive the export");
     }
 
     #[test]
@@ -822,11 +828,10 @@ mod tests {
 
         // A raw path does not consult the map: the readable name must not resolve.
         assert!(doc.get_raw(&[RawStep::Key("Version".to_string())]).is_none());
-        assert_eq!(
-            describe_raw_path(&steps, &keys),
-            "Ps4[1].b2n",
-            "display names come from the map, the address stays raw"
-        );
+        // The display is the readable spelling (`Ps4` is `MatrixAt`, `b2n` is
+        // `Id`); the steps above stay raw, so a duplicate readable name cannot
+        // make the address ambiguous.
+        assert_eq!(describe_raw_path(&steps, &keys), "MatrixAt[1].Id", "the map names the display");
     }
 
     #[test]

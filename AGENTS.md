@@ -97,6 +97,13 @@ Two more rules the code enforces, not just documents:
   closed-source Java editor may be read for format facts, never copied, and no
   Hello Games assets (icons, text tables) get committed — those are generated
   locally from the player's install.
+* The one game-derived file that *is* committed is
+  `crates/nms-model/data/baseline-mapping.json`: field-name pairs our own tool
+  derives from the game's executable (bare identifiers, no game text), so the
+  editor names fields on a machine with no game installed. Regenerate it with
+  `tools/build-baseline-mapping.sh` when the fixtures or the game change. Never
+  copy MBINCompiler's `mapping.json` (LGPL-3.0) into the tree — a copy the
+  player has installed is merged at run time only.
 
 ## Where the knowledge lives
 

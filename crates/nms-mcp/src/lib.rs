@@ -47,8 +47,9 @@ pin_backup keeps a known-good one out of pruning. Balances (units, nanites, \
 quicksilver) are currencies: use set_currency, not add_item. Item ids are the \
 game's own ids such as ^CARBON; search_items resolves a name to an id. \
 Inventories and learned lists need the key mapping, and item names need a data \
-pack; both are derived from the player's own game by `nmsedit data refresh` on \
-that machine, and the tools say so when one is missing.";
+pack. A baseline mapping is built into the editor; `nmsedit data refresh` on \
+the player's machine derives the full mapping and the data pack, and the tools \
+say when one is missing.";
 
 /// A protocol-level failure, as JSON-RPC wants them.
 ///

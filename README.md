@@ -23,9 +23,9 @@ symptoms:
 * **save integrity by construction** instead of by careful clicking;
 * **a data pipeline** that regenerates game text and item names from the
   player's own install, so a game update is a command, not a wait (84,965 strings
-  and 7,640 item names in 137 ms today) — and the same for the obfuscated field
-  names, which are a hash of the name and can be read straight out of the
-  executable ([how](docs/findings-mapping.md));
+  and 7,640 item names in 137 ms today) — and the obfuscated field names, which
+  are a hash of the name, come from the same pipeline, with a baseline for the
+  keys real saves use compiled into the editor ([how](docs/findings-mapping.md));
 * **automation** — a library, a CLI, and an MCP server so an agent can do the
   clicking (see [MCP](#mcp)).
 
@@ -59,11 +59,11 @@ storage slot    2 (PlayerState1)
 | `nmsedit restore <zip> --to <dir>` | restore a backup (replaced files are backed up first) |
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
 | `nmsedit mapping <mapping.json>` | load a key mapping and report it |
-| `nmsedit data refresh` | reread the game's archives and rebuild the local data pack |
+| `nmsedit data refresh` | reread the game's archives and rebuild the local data pack and full key mapping |
 | `nmsedit data info` | show the installed data pack |
 | `nmsedit data lookup <id>` | print game text by id |
 | `nmsedit data item <id>` | print item names by id, with the source of each name |
-| `nmsedit data mapping` | derive the save-key mapping from the game's own executable (field names live in `NMS.exe`; the key is a hash of the name), merging the installed file |
+| `nmsedit data mapping` | derive the save-key mapping from the game's own executable (field names live in `NMS.exe`; the key is a hash of the name), merging the installed file; `--saves <dir>` scopes it to those saves and builds the shipped baseline |
 | `nmsedit currencies <save.hg>` | show units, nanites and quicksilver |
 | `nmsedit currency <save.hg> <name> <value>` | set one balance and commit |
 | `nmsedit inventories <save.hg> [--all]` | list inventories, their grids and roles |
@@ -167,9 +167,10 @@ caution: that folder is what Steam Cloud syncs, so an edit there reaches every
 machine signed into the account. Every save backs up first, and the overview's
 backup list is where to go when something looks wrong.
 
-Without a community key mapping the inventory fields fall back to their on-disk
-names, and without a data pack the item names are absent; the window says so in
-both cases.
+Field names come from the key mapping compiled into the editor; without a data
+pack the item names are absent, and without a full mapping the handful of
+fields the derivation cannot resolve keep their on-disk names. The window says
+so in both cases.
 
 ## MCP
 
@@ -209,7 +210,8 @@ is verified in memory before it touches the disk, and an unedited save is never
 rewritten. Writing into the game's own folder is allowed; the result carries a
 `note:` line saying that folder is the one Steam Cloud syncs, so an agent can
 pass that on instead of hiding it. `NMSEDIT_MAPPING` and `NMSEDIT_PACK` select
-the key mapping and data pack, as they do for the CLI and GUI.
+the full key mapping and data pack, as they do for the CLI and GUI; the
+built-in baseline is used when there is no mapping file.
 
 ## Backups
 
@@ -339,12 +341,15 @@ MIT OR Apache-2.0.
 
 Written from scratch against real save files and published format notes. The
 reference Rust parser [`nms-save`](https://crates.io/crates/nms-save) (MIT OR
-Apache-2.0) was used to cross-check the container and metadata layout; mapping
-data comes from the community mapping file distributed with
-[MBINCompiler](https://github.com/monkeyman192/MBINCompiler). No code or data
-from the GPL/AGPL save editors (NomNom, NMSE) or from the closed-source Java
-editor is used — they are consulted as documentation only, and no game assets
-are redistributed.
+Apache-2.0) was used to cross-check the container and metadata layout. The
+field-name baseline compiled into the editor is this project's own derivation
+from the game's executable — bare identifiers, not game text — and a community
+mapping file distributed with
+[MBINCompiler](https://github.com/monkeyman192/MBINCompiler) is merged in when
+the player has one; it is never copied into this repository (that project is
+LGPL-3.0). No code or data from the GPL/AGPL save editors (NomNom, NMSE) or from
+the closed-source Java editor is used — they are consulted as documentation
+only, and no game assets are redistributed.
 
 No Man's Sky is a trademark of Hello Games. This is an unofficial, unaffiliated
 tool.

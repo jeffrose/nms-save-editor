@@ -1,0 +1,3945 @@
+{
+  "libMBIN_version": "nmsedit",
+  "generator": "nmsedit",
+  "source": "the field-name tables in the game's executable, limited to keys real saves use",
+  "names_read": 76550,
+  "ambiguous_keys_dropped": 305,
+  "Mapping": [
+    {
+      "Key": "02l",
+      "Value": "AmmoId"
+    },
+    {
+      "Key": "05J",
+      "Value": "TimeLastSpaceBattle"
+    },
+    {
+      "Key": "080",
+      "Value": "ForceOverrideEncounter"
+    },
+    {
+      "Key": "0AL",
+      "Value": "TradingClass"
+    },
+    {
+      "Key": "0Hi",
+      "Value": "AlienRace"
+    },
+    {
+      "Key": "0Is",
+      "Value": "AltBossRewards"
+    },
+    {
+      "Key": "0L0",
+      "Value": "DepthOfFieldPhysConvergence"
+    },
+    {
+      "Key": "0Pa",
+      "Value": "RedeemedTwitchRewards"
+    },
+    {
+      "Key": "0SX",
+      "Value": "ScoreBoost"
+    },
+    {
+      "Key": "0WR",
+      "Value": "SuitableForRobotCreatureDiscovery"
+    },
+    {
+      "Key": "0bY",
+      "Value": "FinalCantRewardMessage"
+    },
+    {
+      "Key": "0c7",
+      "Value": "UAsList"
+    },
+    {
+      "Key": "0tA",
+      "Value": "DepthOfFieldSetting"
+    },
+    {
+      "Key": "0wS",
+      "Value": "FreighterInventory_TechOnly"
+    },
+    {
+      "Key": "12H",
+      "Value": "BlockAggressiveSentinelsInStartSystem"
+    },
+    {
+      "Key": "1@y",
+      "Value": "FreighterEngineEffect"
+    },
+    {
+      "Key": "1JW",
+      "Value": "MissionSeed"
+    },
+    {
+      "Key": "1Lx",
+      "Value": "ScreenData"
+    },
+    {
+      "Key": "1OQ",
+      "Value": "WonderStatValue"
+    },
+    {
+      "Key": "1XT",
+      "Value": "MarkerLabel"
+    },
+    {
+      "Key": "1Zr",
+      "Value": "AutoplayOnFoot"
+    },
+    {
+      "Key": "1c;",
+      "Value": "CreatureHostilityDifficulty"
+    },
+    {
+      "Key": "1o6",
+      "Value": "InventoryClass"
+    },
+    {
+      "Key": "1o9",
+      "Value": "Amount"
+    },
+    {
+      "Key": "1wj",
+      "Value": "HiredWorker"
+    },
+    {
+      "Key": "1xe",
+      "Value": "DestroyedFrigateIndices"
+    },
+    {
+      "Key": "20I",
+      "Value": "UniqueId"
+    },
+    {
+      "Key": "21y",
+      "Value": "DescLocID"
+    },
+    {
+      "Key": "22a",
+      "Value": "CloudAmount"
+    },
+    {
+      "Key": "2Ak",
+      "Value": "Address"
+    },
+    {
+      "Key": "2Df",
+      "Value": "StarType"
+    },
+    {
+      "Key": "2H:",
+      "Value": "InitialProductivity"
+    },
+    {
+      "Key": "2MH",
+      "Value": "TechnologyCategory"
+    },
+    {
+      "Key": "2SD",
+      "Value": "DisableNPCMovementUntilMilestoneWithSeedComplete"
+    },
+    {
+      "Key": "2c0",
+      "Value": "NumSlotsFromTech"
+    },
+    {
+      "Key": "2mW",
+      "Value": "AlwaysAvailableInPirateStations"
+    },
+    {
+      "Key": "2sL",
+      "Value": "StartWithAllItemsKnown"
+    },
+    {
+      "Key": "30;",
+      "Value": "ForceStartSystemTernary"
+    },
+    {
+      "Key": "30s",
+      "Value": "OtherSideOfPortalReturnBase"
+    },
+    {
+      "Key": "33J",
+      "Value": "ResetSaveOnDeath"
+    },
+    {
+      "Key": "3?K",
+      "Value": "Owner"
+    },
+    {
+      "Key": "3Ev",
+      "Value": "OSDMessage"
+    },
+    {
+      "Key": "3I1",
+      "Value": "TS"
+    },
+    {
+      "Key": "3Mw",
+      "Value": "Stages"
+    },
+    {
+      "Key": "3NI",
+      "Value": "ForgottenProducts"
+    },
+    {
+      "Key": "3Nc",
+      "Value": "Chest1Inventory"
+    },
+    {
+      "Key": "3R<",
+      "Value": "ShipSeed"
+    },
+    {
+      "Key": "3Vm",
+      "Value": "OfferDeclinedOSD"
+    },
+    {
+      "Key": "3Xh",
+      "Value": "ObliterateLingeringCommunityPortalData"
+    },
+    {
+      "Key": "3Z>",
+      "Value": "FleetSeed"
+    },
+    {
+      "Key": "3ZH",
+      "Value": "Index"
+    },
+    {
+      "Key": "3kN",
+      "Value": "OnlyFoundAtSpacePOIs"
+    },
+    {
+      "Key": "3ks",
+      "Value": "ForceAllSentinelsAggressive"
+    },
+    {
+      "Key": "3oW",
+      "Value": "InterventionEventMissionID"
+    },
+    {
+      "Key": "3ol",
+      "Value": "Core"
+    },
+    {
+      "Key": "3uO",
+      "Value": "RequiredSpacePoiType"
+    },
+    {
+      "Key": "428",
+      "Value": "ChargingRequirementsDifficulty"
+    },
+    {
+      "Key": "4=k",
+      "Value": "ID"
+    },
+    {
+      "Key": "4>;",
+      "Value": "DamageTimers"
+    },
+    {
+      "Key": "4Bv",
+      "Value": "WristScreenData"
+    },
+    {
+      "Key": "4I:",
+      "Value": "HardestUsedPreset"
+    },
+    {
+      "Key": "4K:",
+      "Value": "EndRewardsRedemptionState"
+    },
+    {
+      "Key": "4Km",
+      "Value": "NPCWorkers"
+    },
+    {
+      "Key": "4Os",
+      "Value": "AbandonedFreighterHazardProtectionMul"
+    },
+    {
+      "Key": "4X;",
+      "Value": "InitialUpkeepCost"
+    },
+    {
+      "Key": "4Yf",
+      "Value": "Chargeable"
+    },
+    {
+      "Key": "4eu",
+      "Value": "GraveInventory"
+    },
+    {
+      "Key": "4hl",
+      "Value": "ShipUsesLegacyColours"
+    },
+    {
+      "Key": "4ia",
+      "Value": "GravePosition"
+    },
+    {
+      "Key": "4j2",
+      "Value": "TerminalPosition"
+    },
+    {
+      "Key": "4kx",
+      "Value": "TimeOfLastIncomeCollection"
+    },
+    {
+      "Key": "4q6",
+      "Value": "ShowOnlyIfSequenceTarget"
+    },
+    {
+      "Key": "4xJ",
+      "Value": "ShipTransformUp"
+    },
+    {
+      "Key": "5;w",
+      "Value": "IsTemplate"
+    },
+    {
+      "Key": "5?q",
+      "Value": "HasGalacticMapRequestFirstPurple"
+    },
+    {
+      "Key": "5L6",
+      "Value": "UA"
+    },
+    {
+      "Key": "5LX",
+      "Value": "JetpackEffect"
+    },
+    {
+      "Key": "5PB",
+      "Value": "ForceDeepSpaceAmbientFrigatesOnInfested"
+    },
+    {
+      "Key": "5ST",
+      "Value": "GameStartAddress1"
+    },
+    {
+      "Key": "5Sg",
+      "Value": "FreighterTransformUp"
+    },
+    {
+      "Key": "5T?",
+      "Value": "TeamMembers"
+    },
+    {
+      "Key": "5Tg",
+      "Value": "Chest9Inventory"
+    },
+    {
+      "Key": "5Xr",
+      "Value": "CantRewardMessage"
+    },
+    {
+      "Key": "5a3",
+      "Value": "ProductionAmountMultiplier"
+    },
+    {
+      "Key": "5es",
+      "Value": "TotalNumberOfExpeditions"
+    },
+    {
+      "Key": "5tH",
+      "Value": "AddedAutomatically"
+    },
+    {
+      "Key": "6:A",
+      "Value": "UseTeamShipPalettes"
+    },
+    {
+      "Key": "6:a",
+      "Value": "TradeCategory"
+    },
+    {
+      "Key": "6<9",
+      "Value": "NeedsBiome"
+    },
+    {
+      "Key": "6BQ",
+      "Value": "Encryption"
+    },
+    {
+      "Key": "6Ic",
+      "Value": "RandomisePlanetChoiceFromSeed"
+    },
+    {
+      "Key": "6Mq",
+      "Value": "DoCommunityMissionTextSubstitutions"
+    },
+    {
+      "Key": "6Ws",
+      "Value": "NextSurveyedEventPositionIndex"
+    },
+    {
+      "Key": "6X1",
+      "Value": "LastChangeTimestamp"
+    },
+    {
+      "Key": "6f=",
+      "Value": "PlayerStateData"
+    },
+    {
+      "Key": "6fX",
+      "Value": "BoneScaleSeed"
+    },
+    {
+      "Key": "6nS",
+      "Value": "Difficulty"
+    },
+    {
+      "Key": "6pZ",
+      "Value": "ScreenScale"
+    },
+    {
+      "Key": "753",
+      "Value": "RewardGroup"
+    },
+    {
+      "Key": "7<Z",
+      "Value": "TransferPopupTitle"
+    },
+    {
+      "Key": "7?0",
+      "Value": "SquadronUnlockedPilotSlots"
+    },
+    {
+      "Key": "7DH",
+      "Value": "CustomisationData"
+    },
+    {
+      "Key": "7Ej",
+      "Value": "MustFindSystem"
+    },
+    {
+      "Key": "7Mc",
+      "Value": "PrimaryPlanet"
+    },
+    {
+      "Key": "7ND",
+      "Value": "DifficultyPresetType"
+    },
+    {
+      "Key": "7Un",
+      "Value": "StoryPortalSeed"
+    },
+    {
+      "Key": "7b?",
+      "Value": "Chest8Layout"
+    },
+    {
+      "Key": "7bp",
+      "Value": "ActualType"
+    },
+    {
+      "Key": "7dP",
+      "Value": "BuildFullyCharged"
+    },
+    {
+      "Key": "7fn",
+      "Value": "SandwormGlobalOverrideTimer"
+    },
+    {
+      "Key": "7hK",
+      "Value": "DamageTaken"
+    },
+    {
+      "Key": "7jW",
+      "Value": "ShipInventoryLayout"
+    },
+    {
+      "Key": "7m<",
+      "Value": "EasyToRefine"
+    },
+    {
+      "Key": "7pJ",
+      "Value": "UpgradeColour"
+    },
+    {
+      "Key": "7tH",
+      "Value": "NeedsExtremeHazardPlanet"
+    },
+    {
+      "Key": "8>q",
+      "Value": "Platform"
+    },
+    {
+      "Key": "8?J",
+      "Value": "Data"
+    },
+    {
+      "Key": "8DG",
+      "Value": "BannerMainColour"
+    },
+    {
+      "Key": "8GD",
+      "Value": "AvoidedIntervention"
+    },
+    {
+      "Key": "8L;",
+      "Value": "Upgrade"
+    },
+    {
+      "Key": "8Sk",
+      "Value": "UseTeamShipSeeds"
+    },
+    {
+      "Key": "8ZP",
+      "Value": "FreighterInventory"
+    },
+    {
+      "Key": "8br",
+      "Value": "WarpsLastSpaceBattle"
+    },
+    {
+      "Key": "8cR",
+      "Value": "StartingUAScreenFilter"
+    },
+    {
+      "Key": "8eX",
+      "Value": "UseTrading"
+    },
+    {
+      "Key": "8iI",
+      "Value": "ByteBeatLibrary"
+    },
+    {
+      "Key": "8jm",
+      "Value": "Biome"
+    },
+    {
+      "Key": "8jn",
+      "Value": "BlockAllBaseAndEndpointSharing"
+    },
+    {
+      "Key": "8nH",
+      "Value": "MatrixUp"
+    },
+    {
+      "Key": "8rm",
+      "Value": "MissionIcon"
+    },
+    {
+      "Key": "8wT",
+      "Value": "Title"
+    },
+    {
+      "Key": "8xx",
+      "Value": "ActiveSpaceBattleUA"
+    },
+    {
+      "Key": "93I",
+      "Value": "WonderType"
+    },
+    {
+      "Key": "93M",
+      "Value": "Filename"
+    },
+    {
+      "Key": "96H",
+      "Value": "CorvettePartCategory"
+    },
+    {
+      "Key": "97S",
+      "Value": "MultitoolData"
+    },
+    {
+      "Key": "9:T",
+      "Value": "MessageTime"
+    },
+    {
+      "Key": "9;o",
+      "Value": "Level"
+    },
+    {
+      "Key": "9=d",
+      "Value": "JudgementsSettled"
+    },
+    {
+      "Key": "9@i",
+      "Value": "Table"
+    },
+    {
+      "Key": "9B5",
+      "Value": "RequiresStatConversion"
+    },
+    {
+      "Key": "9J<",
+      "Value": "Requirements"
+    },
+    {
+      "Key": "9JR",
+      "Value": "ActiveSpaceBattleType"
+    },
+    {
+      "Key": "9Lg",
+      "Value": "UnlockedPetSlots"
+    },
+    {
+      "Key": "9Lm",
+      "Value": "BoltAmmo"
+    },
+    {
+      "Key": "9QR",
+      "Value": "PayloadElements"
+    },
+    {
+      "Key": "9T@",
+      "Value": "CargoLayout"
+    },
+    {
+      "Key": "9hR",
+      "Value": "BannerIcon"
+    },
+    {
+      "Key": "9i?",
+      "Value": "CorvetteStorageLayout"
+    },
+    {
+      "Key": "9iD",
+      "Value": "Summary"
+    },
+    {
+      "Key": "9wg",
+      "Value": "FreighterMatrixAt"
+    },
+    {
+      "Key": ":0x",
+      "Value": "FirstAtlasStationDiscovered"
+    },
+    {
+      "Key": ":1n",
+      "Value": "RendezvousUAs"
+    },
+    {
+      "Key": ":3V",
+      "Value": "BuildingPreventionRadius"
+    },
+    {
+      "Key": "::o",
+      "Value": "CommunityTierLabel"
+    },
+    {
+      "Key": ":?x",
+      "Value": "GreyIfCantStart"
+    },
+    {
+      "Key": ":JX",
+      "Value": "KnownWords"
+    },
+    {
+      "Key": ":ML",
+      "Value": "PulseAmmo"
+    },
+    {
+      "Key": ":No",
+      "Value": "Slots"
+    },
+    {
+      "Key": ":Qn",
+      "Value": "NextBuildingUpgradeClass"
+    },
+    {
+      "Key": ":aM",
+      "Value": "ProductionTimeMultiplier"
+    },
+    {
+      "Key": ":cY",
+      "Value": "ClearGameTableConfigOverrideOnCompletion"
+    },
+    {
+      "Key": ":dY",
+      "Value": "ShipResource"
+    },
+    {
+      "Key": ":o;",
+      "Value": "Question"
+    },
+    {
+      "Key": ";4P",
+      "Value": "SpecificPets"
+    },
+    {
+      "Key": ";?C",
+      "Value": "ChestMagicInventory"
+    },
+    {
+      "Key": ";DM",
+      "Value": "StartingPrimaryWeapon"
+    },
+    {
+      "Key": ";EL",
+      "Value": "SeasonTransferInventoryConfig"
+    },
+    {
+      "Key": ";FZ",
+      "Value": "Enqueued"
+    },
+    {
+      "Key": ";JQ",
+      "Value": "SpaceGrave"
+    },
+    {
+      "Key": ";Ki",
+      "Value": "OptionalSubstances"
+    },
+    {
+      "Key": ";MW",
+      "Value": "SandwormGlobalOverrideSpawnChance"
+    },
+    {
+      "Key": ";R7",
+      "Value": "CurrentMissionID"
+    },
+    {
+      "Key": ";UQ",
+      "Value": "ProtectedLocations"
+    },
+    {
+      "Key": ";Up",
+      "Value": "IntroQuestions"
+    },
+    {
+      "Key": ";g=",
+      "Value": "MaxItemsForSale"
+    },
+    {
+      "Key": ";l5",
+      "Value": "Inventory"
+    },
+    {
+      "Key": ";lF",
+      "Value": "BuildableShipTechID"
+    },
+    {
+      "Key": ";rI",
+      "Value": "AlwaysStormy"
+    },
+    {
+      "Key": ";wI",
+      "Value": "UseLegacyStationsRadius"
+    },
+    {
+      "Key": ";x>",
+      "Value": "OptionalProducts"
+    },
+    {
+      "Key": "<0F",
+      "Value": "TransferPopupButtonSub"
+    },
+    {
+      "Key": "<:S",
+      "Value": "PlayerClaimedTime"
+    },
+    {
+      "Key": "<:g",
+      "Value": "FoodBonusStatAmount"
+    },
+    {
+      "Key": "<>B",
+      "Value": "HoloScepticInteraction"
+    },
+    {
+      "Key": "<Aw",
+      "Value": "BlockFirstSpaceMusic"
+    },
+    {
+      "Key": "<IP",
+      "Value": "Chest5Inventory"
+    },
+    {
+      "Key": "<M9",
+      "Value": "FoodUnitLayout"
+    },
+    {
+      "Key": "<ON",
+      "Value": "EventPriority"
+    },
+    {
+      "Key": "<d2",
+      "Value": "ProceduralTexture"
+    },
+    {
+      "Key": "<dk",
+      "Value": "UsedEntitlements"
+    },
+    {
+      "Key": "<h0",
+      "Value": "CommonStateData"
+    },
+    {
+      "Key": "<jc",
+      "Value": "StatsToPersistOnReset"
+    },
+    {
+      "Key": "=3B",
+      "Value": "Chest1Layout"
+    },
+    {
+      "Key": "=4m",
+      "Value": "HasLoopedIndicies"
+    },
+    {
+      "Key": "=:T",
+      "Value": "SeasonalUAStationTradeData"
+    },
+    {
+      "Key": "==:",
+      "Value": "SuitableForWeirdCreatureDiscovery"
+    },
+    {
+      "Key": "=Tb",
+      "Value": "Width"
+    },
+    {
+      "Key": "=bJ",
+      "Value": "TraitsSeed"
+    },
+    {
+      "Key": "=o:",
+      "Value": "TerrainEditData"
+    },
+    {
+      "Key": "=wD",
+      "Value": "FL"
+    },
+    {
+      "Key": "=yU",
+      "Value": "InventoryContainer"
+    },
+    {
+      "Key": ">54",
+      "Value": "MinExtraSystemProducts"
+    },
+    {
+      "Key": ">6y",
+      "Value": "ForcePlayerRace"
+    },
+    {
+      "Key": ">:l",
+      "Value": "SpacePoiLocation"
+    },
+    {
+      "Key": ">?U",
+      "Value": "MessageData"
+    },
+    {
+      "Key": ">CR",
+      "Value": "RemixNumber"
+    },
+    {
+      "Key": ">JB",
+      "Value": "DefaultToPvPOff"
+    },
+    {
+      "Key": ">KU",
+      "Value": "SeasonTransferInventoryData"
+    },
+    {
+      "Key": ">MX",
+      "Value": "Value"
+    },
+    {
+      "Key": ">Yh",
+      "Value": "FreighterLayout"
+    },
+    {
+      "Key": ">db",
+      "Value": "SunTimer"
+    },
+    {
+      "Key": ">fW",
+      "Value": "LastSpawnTime"
+    },
+    {
+      "Key": ">p0",
+      "Value": "MilestoneIndex"
+    },
+    {
+      "Key": ">r:",
+      "Value": "NPCResource"
+    },
+    {
+      "Key": ">vs",
+      "Value": "IntValue"
+    },
+    {
+      "Key": ">xF",
+      "Value": "HalfFocalPlaneDepthSpace"
+    },
+    {
+      "Key": "?<V",
+      "Value": "HasFur"
+    },
+    {
+      "Key": "?<t",
+      "Value": "AcceptHeader"
+    },
+    {
+      "Key": "?<y",
+      "Value": "PersistentBaseDifficultyFlags"
+    },
+    {
+      "Key": "?=a",
+      "Value": "PlanetSeeds"
+    },
+    {
+      "Key": "?=t",
+      "Value": "Options"
+    },
+    {
+      "Key": "?D0",
+      "Value": "ShipPaletteID"
+    },
+    {
+      "Key": "?DC",
+      "Value": "PauseTime"
+    },
+    {
+      "Key": "?Dt",
+      "Value": "CraftingIsFree"
+    },
+    {
+      "Key": "?JH",
+      "Value": "SellPriceIncreaseGreenThreshold"
+    },
+    {
+      "Key": "?MX",
+      "Value": "SurveyDistance"
+    },
+    {
+      "Key": "?SS",
+      "Value": "InventoryStackLimitsDifficulty"
+    },
+    {
+      "Key": "?SU",
+      "Value": "SettlementJudgementType"
+    },
+    {
+      "Key": "?WG",
+      "Value": "BarterItemPreferenceFloor"
+    },
+    {
+      "Key": "?db",
+      "Value": "EnumID"
+    },
+    {
+      "Key": "?eS",
+      "Value": "PostMissionIndex"
+    },
+    {
+      "Key": "@1E",
+      "Value": "Chest4Layout"
+    },
+    {
+      "Key": "@6c",
+      "Value": "TextureOptionGroupName"
+    },
+    {
+      "Key": "@=A",
+      "Value": "Curve"
+    },
+    {
+      "Key": "@EL",
+      "Value": "Seed"
+    },
+    {
+      "Key": "@Hb",
+      "Value": "LastTrustDecreaseTime"
+    },
+    {
+      "Key": "@Ik",
+      "Value": "Chest3Layout"
+    },
+    {
+      "Key": "@Nv",
+      "Value": "TeamOverrides"
+    },
+    {
+      "Key": "@P8",
+      "Value": "ArchivedClass"
+    },
+    {
+      "Key": "@Vn",
+      "Value": "MultiShipEnabled"
+    },
+    {
+      "Key": "@ZJ",
+      "Value": "Objects"
+    },
+    {
+      "Key": "@e5",
+      "Value": "Chest7Inventory"
+    },
+    {
+      "Key": "@eC",
+      "Value": "ForceBlackHolesAtPartyUAs"
+    },
+    {
+      "Key": "@ip",
+      "Value": "Chest2Layout"
+    },
+    {
+      "Key": "@lX",
+      "Value": "WeaponSeed"
+    },
+    {
+      "Key": "@rg",
+      "Value": "MiniMissionStartTime"
+    },
+    {
+      "Key": "@uW",
+      "Value": "CorvetteRewardFrequency"
+    },
+    {
+      "Key": "@ui",
+      "Value": "HomeSystemSeed"
+    },
+    {
+      "Key": "@xT",
+      "Value": "CraftAmountMultiplier"
+    },
+    {
+      "Key": "@xZ",
+      "Value": "DebrisFile"
+    },
+    {
+      "Key": "A0K",
+      "Value": "SpacePoiDiscoveryNextIndex"
+    },
+    {
+      "Key": "A14",
+      "Value": "MaxExtraSystemProducts"
+    },
+    {
+      "Key": "A1f",
+      "Value": "MarkerStack"
+    },
+    {
+      "Key": "A9D",
+      "Value": "LaunchFuelCost"
+    },
+    {
+      "Key": "A<w",
+      "Value": "SentinelAttackCount"
+    },
+    {
+      "Key": "ADw",
+      "Value": "Time"
+    },
+    {
+      "Key": "AFe",
+      "Value": "ConflictLevel"
+    },
+    {
+      "Key": "ASZ",
+      "Value": "Text"
+    },
+    {
+      "Key": "ATe",
+      "Value": "LocID"
+    },
+    {
+      "Key": "Aak",
+      "Value": "Colours"
+    },
+    {
+      "Key": "Agx",
+      "Value": "VehicleAIControlEnabled"
+    },
+    {
+      "Key": "AiZ",
+      "Value": "MaxAmountOfSubstanceAvailable"
+    },
+    {
+      "Key": "Air",
+      "Value": "LastBugAttackChangeTime"
+    },
+    {
+      "Key": "Ak8",
+      "Value": "MiniMissionSeed"
+    },
+    {
+      "Key": "Anq",
+      "Value": "DestroyedAtlasAddresses"
+    },
+    {
+      "Key": "B;B",
+      "Value": "Fishing"
+    },
+    {
+      "Key": "B@N",
+      "Value": "Class"
+    },
+    {
+      "Key": "BBA",
+      "Value": "DownloadType"
+    },
+    {
+      "Key": "BBw",
+      "Value": "NameLower"
+    },
+    {
+      "Key": "BFN",
+      "Value": "AltDescription"
+    },
+    {
+      "Key": "BGQ",
+      "Value": "SpawnGrave"
+    },
+    {
+      "Key": "BQo",
+      "Value": "DamagedDescription"
+    },
+    {
+      "Key": "BZY",
+      "Value": "StateOnDeath"
+    },
+    {
+      "Key": "BbG",
+      "Value": "CreatureHostility"
+    },
+    {
+      "Key": "Bf;",
+      "Value": "OrbPlayer"
+    },
+    {
+      "Key": "Bg3",
+      "Value": "AbandonedFreighterTransformUp"
+    },
+    {
+      "Key": "Bq<",
+      "Value": "Chest10Inventory"
+    },
+    {
+      "Key": "Bur",
+      "Value": "ShipNeedsTerrainPositioning"
+    },
+    {
+      "Key": "ByQ",
+      "Value": "ParentTechId"
+    },
+    {
+      "Key": "C03",
+      "Value": "CreateContextSaveDataMask"
+    },
+    {
+      "Key": "C6D",
+      "Value": "NeedsAbandonedSystem"
+    },
+    {
+      "Key": "CA4",
+      "Value": "Layout"
+    },
+    {
+      "Key": "CJJ",
+      "Value": "EarnedSeasonSpecialRewards"
+    },
+    {
+      "Key": "CKb",
+      "Value": "WeaponInventoryLayout"
+    },
+    {
+      "Key": "CT3",
+      "Value": "UseStarType"
+    },
+    {
+      "Key": "CVX",
+      "Value": "UserData"
+    },
+    {
+      "Key": "CX9",
+      "Value": "LinkColour"
+    },
+    {
+      "Key": "CXv",
+      "Value": "LargestCatchList"
+    },
+    {
+      "Key": "CYJ",
+      "Value": "SurveyedEventPositions"
+    },
+    {
+      "Key": "CZw",
+      "Value": "ElementId"
+    },
+    {
+      "Key": "Ch:",
+      "Value": "DeploysInto"
+    },
+    {
+      "Key": "D3X",
+      "Value": "MessageAudio"
+    },
+    {
+      "Key": "D6b",
+      "Value": "PTK"
+    },
+    {
+      "Key": "D8J",
+      "Value": "Symbol"
+    },
+    {
+      "Key": "D9@",
+      "Value": "ScreenshotAt"
+    },
+    {
+      "Key": "D;o",
+      "Value": "Races"
+    },
+    {
+      "Key": "DE0",
+      "Value": "OptionName"
+    },
+    {
+      "Key": "DPp",
+      "Value": "PersistentBaseTypes"
+    },
+    {
+      "Key": "DQh",
+      "Value": "ShipMoveableContents"
+    },
+    {
+      "Key": "DTD",
+      "Value": "NeverPinnable"
+    },
+    {
+      "Key": "DaC",
+      "Value": "OnOtherSideOfPortal"
+    },
+    {
+      "Key": "Ddk",
+      "Value": "KnownRefinerRecipes"
+    },
+    {
+      "Key": "Dn>",
+      "Value": "EnergyDrainDifficulty"
+    },
+    {
+      "Key": "DtI",
+      "Value": "ProgressionLevel"
+    },
+    {
+      "Key": "E7u",
+      "Value": "DifficultyPreset"
+    },
+    {
+      "Key": "E<S",
+      "Value": "PetBattlerCoreStatClassOverrides"
+    },
+    {
+      "Key": "E=X",
+      "Value": "Hash"
+    },
+    {
+      "Key": "E?H",
+      "Value": "GoodForSelling"
+    },
+    {
+      "Key": "E?v",
+      "Value": "SavedInteractionIndicies"
+    },
+    {
+      "Key": "E@?",
+      "Value": "PlayStartMusicInIntro"
+    },
+    {
+      "Key": "EG=",
+      "Value": "UseStartPlanetObjectListOverrides"
+    },
+    {
+      "Key": "EQt",
+      "Value": "MissionRecurrences"
+    },
+    {
+      "Key": "ET<",
+      "Value": "Cooldown"
+    },
+    {
+      "Key": "EWh",
+      "Value": "EventStartType"
+    },
+    {
+      "Key": "Eaw",
+      "Value": "SystemNeedsGasGiant"
+    },
+    {
+      "Key": "Eb1",
+      "Value": "AlwaysConsideredBarterProducts"
+    },
+    {
+      "Key": "Ec6",
+      "Value": "WeaponStatClass"
+    },
+    {
+      "Key": "Eg1",
+      "Value": "FuelUseDifficulty"
+    },
+    {
+      "Key": "Eh=",
+      "Value": "MaxAmountOfProductAvailable"
+    },
+    {
+      "Key": "EkX",
+      "Value": "AbandonedFreighterTransformAt"
+    },
+    {
+      "Key": "F0A",
+      "Value": "NeverShow"
+    },
+    {
+      "Key": "F=4",
+      "Value": "FinalStageTitle"
+    },
+    {
+      "Key": "F=J",
+      "Value": "UsedDiscoveryOwnersV2"
+    },
+    {
+      "Key": "F?0",
+      "Value": "PersistentPlayerBases"
+    },
+    {
+      "Key": "FB5",
+      "Value": "ItemShopAvailability"
+    },
+    {
+      "Key": "FCx",
+      "Value": "PaletteID"
+    },
+    {
+      "Key": "FKM",
+      "Value": "ResourceOverride"
+    },
+    {
+      "Key": "FN5",
+      "Value": "Event"
+    },
+    {
+      "Key": "FQ3",
+      "Value": "Bloom"
+    },
+    {
+      "Key": "FdP",
+      "Value": "FreighterInventory_Cargo"
+    },
+    {
+      "Key": "FfZ",
+      "Value": "LastWentIntoDebtTime"
+    },
+    {
+      "Key": "Fgx",
+      "Value": "FinalRewardDescription"
+    },
+    {
+      "Key": "Fk@",
+      "Value": "NexusMatrixAt"
+    },
+    {
+      "Key": "FrH",
+      "Value": "LastWeaponRefreshTimestamp"
+    },
+    {
+      "Key": "FyV",
+      "Value": "OverrideStartingUAScreenFilter"
+    },
+    {
+      "Key": "G0<",
+      "Value": "CommunityProgressTitle"
+    },
+    {
+      "Key": "G0x",
+      "Value": "AllowedSpacePoiTypes"
+    },
+    {
+      "Key": "G4i",
+      "Value": "EnergyDrainMultiplier"
+    },
+    {
+      "Key": "G:V",
+      "Value": "TutorialEnabled"
+    },
+    {
+      "Key": "G:p",
+      "Value": "ScreenFilter"
+    },
+    {
+      "Key": "G;H",
+      "Value": "NumberOfFailedEventsThisExpedition"
+    },
+    {
+      "Key": "G;q",
+      "Value": "FreighterLastSpawnTime"
+    },
+    {
+      "Key": "GFy",
+      "Value": "BaseValue"
+    },
+    {
+      "Key": "GHX",
+      "Value": "AdditionalProtectedUAs"
+    },
+    {
+      "Key": "GME",
+      "Value": "FinalReward"
+    },
+    {
+      "Key": "GcZ",
+      "Value": "NeedsWaterPlanet"
+    },
+    {
+      "Key": "Ght",
+      "Value": "OverrideMTFilename"
+    },
+    {
+      "Key": "HE0",
+      "Value": "SeasonNameUpper"
+    },
+    {
+      "Key": "HMQ",
+      "Value": "PendingJudgementType"
+    },
+    {
+      "Key": "HQj",
+      "Value": "IsFavourite"
+    },
+    {
+      "Key": "HWh",
+      "Value": "LastAlertChangeTime"
+    },
+    {
+      "Key": "HbG",
+      "Value": "LastPortal"
+    },
+    {
+      "Key": "HbY",
+      "Value": "CreatureType"
+    },
+    {
+      "Key": "Hdt",
+      "Value": "SettlementHistory"
+    },
+    {
+      "Key": "HfT",
+      "Value": "DepthOfFieldPhysAperture"
+    },
+    {
+      "Key": "HhX",
+      "Value": "CustomSpeciesName"
+    },
+    {
+      "Key": "HnX",
+      "Value": "UseAnomaly"
+    },
+    {
+      "Key": "Hr:",
+      "Value": "MissionMarkerHighlightStyleOverride"
+    },
+    {
+      "Key": "HtR",
+      "Value": "BuildingRadiusShipOffsetMultiplier"
+    },
+    {
+      "Key": "I;n",
+      "Value": "RewardDescription"
+    },
+    {
+      "Key": "IDc",
+      "Value": "Chest2Inventory"
+    },
+    {
+      "Key": "IEo",
+      "Value": "Moods"
+    },
+    {
+      "Key": "IRi",
+      "Value": "TimeLastMiniStation"
+    },
+    {
+      "Key": "IaE",
+      "Value": "AllowUnmodifiedReroll"
+    },
+    {
+      "Key": "Ifu",
+      "Value": "FishingDifficulty"
+    },
+    {
+      "Key": "Iis",
+      "Value": "RealityIndex"
+    },
+    {
+      "Key": "IpP",
+      "Value": "TradingData"
+    },
+    {
+      "Key": "IsE",
+      "Value": "InsertItemName"
+    },
+    {
+      "Key": "IsL",
+      "Value": "DecryptMissionSeed"
+    },
+    {
+      "Key": "Iu7",
+      "Value": "Supply"
+    },
+    {
+      "Key": "J9A",
+      "Value": "EventEndType"
+    },
+    {
+      "Key": "J=S",
+      "Value": "LastEditedById"
+    },
+    {
+      "Key": "J=T",
+      "Value": "SeasonSaveStateOnDeath"
+    },
+    {
+      "Key": "J>I",
+      "Value": "SubstanceCategory"
+    },
+    {
+      "Key": "JAy",
+      "Value": "Traits"
+    },
+    {
+      "Key": "JBy",
+      "Value": "LastCheckedForStatResetsTime"
+    },
+    {
+      "Key": "JC<",
+      "Value": "BrokenSlotTech"
+    },
+    {
+      "Key": "JLX",
+      "Value": "NeverAllowCorvettePurchases"
+    },
+    {
+      "Key": "JRE",
+      "Value": "TitleUpper"
+    },
+    {
+      "Key": "JWt",
+      "Value": "OfferAcceptedOSD"
+    },
+    {
+      "Key": "JZi",
+      "Value": "SwarmMonumentActive"
+    },
+    {
+      "Key": "JgJ",
+      "Value": "AdditionalKnownTech"
+    },
+    {
+      "Key": "JiM",
+      "Value": "DifficultyMinimums"
+    },
+    {
+      "Key": "JrL",
+      "Value": "GenusSeed"
+    },
+    {
+      "Key": "JvI",
+      "Value": "AnomalyPositionOverride"
+    },
+    {
+      "Key": "K0h",
+      "Value": "TradeProductsPriceImprovements"
+    },
+    {
+      "Key": "K2j",
+      "Value": "DistanceFromShipAtStartOfGame"
+    },
+    {
+      "Key": "K7E",
+      "Value": "UID"
+    },
+    {
+      "Key": "K:U",
+      "Value": "LastPortalUA"
+    },
+    {
+      "Key": "K>D",
+      "Value": "ForceBroken"
+    },
+    {
+      "Key": "KAx",
+      "Value": "PetBattleProgressToTreat"
+    },
+    {
+      "Key": "KCM",
+      "Value": "ShipHealth"
+    },
+    {
+      "Key": "KD8",
+      "Value": "AlwaysPresentProducts"
+    },
+    {
+      "Key": "KO>",
+      "Value": "InteractionType"
+    },
+    {
+      "Key": "KQ<",
+      "Value": "FishPlatformInventory"
+    },
+    {
+      "Key": "KY5",
+      "Value": "LastTrustIncreaseTime"
+    },
+    {
+      "Key": "Kex",
+      "Value": "Stat"
+    },
+    {
+      "Key": "Kgt",
+      "Value": "WeaponInventory"
+    },
+    {
+      "Key": "KlW",
+      "Value": "MainIcon"
+    },
+    {
+      "Key": "Kvr",
+      "Value": "DbResourceId"
+    },
+    {
+      "Key": "KxX",
+      "Value": "NormalisedValueOffWorld"
+    },
+    {
+      "Key": "L0X",
+      "Value": "ForceStartPlanetToHaveScrap"
+    },
+    {
+      "Key": "L3K",
+      "Value": "TaggedPlanetUA"
+    },
+    {
+      "Key": "L6<",
+      "Value": "ExclusivePrimaryStat"
+    },
+    {
+      "Key": "L85",
+      "Value": "Vignette"
+    },
+    {
+      "Key": "LDi",
+      "Value": "ForceStartSystemAbandoned"
+    },
+    {
+      "Key": "LFj",
+      "Value": "Category"
+    },
+    {
+      "Key": "LJb",
+      "Value": "BlockExtremeWeatherInStartSystem"
+    },
+    {
+      "Key": "LT:",
+      "Value": "SprintingCostDifficulty"
+    },
+    {
+      "Key": "Lg8",
+      "Value": "TotalPlayTime"
+    },
+    {
+      "Key": "LgS",
+      "Value": "AutoplayInVehicle"
+    },
+    {
+      "Key": "LnW",
+      "Value": "ForceResetPortal"
+    },
+    {
+      "Key": "LsP",
+      "Value": "SettlementStateRingBufferIndexV2"
+    },
+    {
+      "Key": "LyC",
+      "Value": "DifficultyState"
+    },
+    {
+      "Key": "M2Z",
+      "Value": "GalacticMapRequests"
+    },
+    {
+      "Key": "M?f",
+      "Value": "ParticipantType"
+    },
+    {
+      "Key": "MF2",
+      "Value": "KnownWordGroups"
+    },
+    {
+      "Key": "MLJ",
+      "Value": "Legality"
+    },
+    {
+      "Key": "MMA",
+      "Value": "RequireInteractionRace"
+    },
+    {
+      "Key": "MN0",
+      "Value": "TakeDataFromSeason"
+    },
+    {
+      "Key": "MXH",
+      "Value": "CustomTruckPresets"
+    },
+    {
+      "Key": "MYl",
+      "Value": "Group"
+    },
+    {
+      "Key": "MZ1",
+      "Value": "WonderCreatureRecords"
+    },
+    {
+      "Key": "Mes",
+      "Value": "Edits"
+    },
+    {
+      "Key": "Mp7",
+      "Value": "BuildingSeeds"
+    },
+    {
+      "Key": "MuL",
+      "Value": "NumberOfTimesDamaged"
+    },
+    {
+      "Key": "MwQ",
+      "Value": "ShowSeasonRewards"
+    },
+    {
+      "Key": "Mx@",
+      "Value": "EventID"
+    },
+    {
+      "Key": "N9>",
+      "Value": "Height"
+    },
+    {
+      "Key": "N=w",
+      "Value": "StatsType"
+    },
+    {
+      "Key": "NEK",
+      "Value": "SettlementLocalSaveData"
+    },
+    {
+      "Key": "NFm",
+      "Value": "GraveUniverseAddress"
+    },
+    {
+      "Key": "NKm",
+      "Value": "Name"
+    },
+    {
+      "Key": "NNR",
+      "Value": "GenerationSeed"
+    },
+    {
+      "Key": "NPd",
+      "Value": "GalaxyStarAnomaly"
+    },
+    {
+      "Key": "NQJ",
+      "Value": "VisitedPortal"
+    },
+    {
+      "Key": "NR7",
+      "Value": "InitialBuildingCount"
+    },
+    {
+      "Key": "NS6",
+      "Value": "Points"
+    },
+    {
+      "Key": "NTx",
+      "Value": "Resource"
+    },
+    {
+      "Key": "NUi",
+      "Value": "WeaponClass"
+    },
+    {
+      "Key": "Naj",
+      "Value": "OverriddenReward"
+    },
+    {
+      "Key": "Nxe",
+      "Value": "SpecificSpacePoiId"
+    },
+    {
+      "Key": "O49",
+      "Value": "Interactions"
+    },
+    {
+      "Key": "O=l",
+      "Value": "ArchivedName"
+    },
+    {
+      "Key": "O?u",
+      "Value": "SandwormGlobalOverride"
+    },
+    {
+      "Key": "OGV",
+      "Value": "IsLarge"
+    },
+    {
+      "Key": "OHU",
+      "Value": "SamePlanetAsSeasonParty"
+    },
+    {
+      "Key": "OI3",
+      "Value": "LastUpkeepDebtCheckTime"
+    },
+    {
+      "Key": "OMO",
+      "Value": "ValidSpawnBuildings"
+    },
+    {
+      "Key": "ON4",
+      "Value": "MySongs"
+    },
+    {
+      "Key": "ORx",
+      "Value": "HazardDrainDifficulty"
+    },
+    {
+      "Key": "ObG",
+      "Value": "NeedsExtremeWeatherPlanet"
+    },
+    {
+      "Key": "OpM",
+      "Value": "Radius"
+    },
+    {
+      "Key": "OsQ",
+      "Value": "Store"
+    },
+    {
+      "Key": "Ovv",
+      "Value": "AbandonedFreighterPositionInSystem"
+    },
+    {
+      "Key": "P4=",
+      "Value": "BlockThirdPersonUntilMilestoneWithSeedComplete"
+    },
+    {
+      "Key": "P;m",
+      "Value": "VehicleOwnership"
+    },
+    {
+      "Key": "PBQ",
+      "Value": "SpecificBuildingClass"
+    },
+    {
+      "Key": "PGS",
+      "Value": "AcceptEmpty"
+    },
+    {
+      "Key": "PK0",
+      "Value": "PlayerDeathRespawnTransformAt"
+    },
+    {
+      "Key": "PMT",
+      "Value": "Inventory_TechOnly"
+    },
+    {
+      "Key": "PSw",
+      "Value": "MustCraftInBases"
+    },
+    {
+      "Key": "PYQ",
+      "Value": "DamageGiven"
+    },
+    {
+      "Key": "PZh",
+      "Value": "LastWeaponRefreshTime"
+    },
+    {
+      "Key": "Pa4",
+      "Value": "DebugText"
+    },
+    {
+      "Key": "Pf0",
+      "Value": "Range"
+    },
+    {
+      "Key": "Pk4",
+      "Value": "SaveName"
+    },
+    {
+      "Key": "Pqk",
+      "Value": "FreighterBattleEarlyWarpsOverride"
+    },
+    {
+      "Key": "Ps4",
+      "Value": "MatrixAt"
+    },
+    {
+      "Key": "Pug",
+      "Value": "SeasonTransferInventory"
+    },
+    {
+      "Key": "Q6I",
+      "Value": "Predator"
+    },
+    {
+      "Key": "Q6s",
+      "Value": "ScannerIconHighlightType"
+    },
+    {
+      "Key": "QBT",
+      "Value": "Metadata"
+    },
+    {
+      "Key": "QBc",
+      "Value": "Chest9Layout"
+    },
+    {
+      "Key": "QJG",
+      "Value": "RepairingFrigateIndices"
+    },
+    {
+      "Key": "QKN",
+      "Value": "TechnologyTable"
+    },
+    {
+      "Key": "QNH",
+      "Value": "ProcTechIndex"
+    },
+    {
+      "Key": "Qb3",
+      "Value": "ItemsCount"
+    },
+    {
+      "Key": "QlJ",
+      "Value": "AltId"
+    },
+    {
+      "Key": "QuE",
+      "Value": "ScanEventTable"
+    },
+    {
+      "Key": "Quh",
+      "Value": "OverrideFreighterFilename"
+    },
+    {
+      "Key": "Qwu",
+      "Value": "ShipIsAtDifferentBuildingToPlayer"
+    },
+    {
+      "Key": "R0p",
+      "Value": "BuyButton"
+    },
+    {
+      "Key": "R1m",
+      "Value": "CustomPiratePlanetFlybyTimer"
+    },
+    {
+      "Key": "R7u",
+      "Value": "ForgottenTech"
+    },
+    {
+      "Key": "R@v",
+      "Value": "ArchivedMultitools"
+    },
+    {
+      "Key": "RB7",
+      "Value": "FreighterUniverseAddress"
+    },
+    {
+      "Key": "RCa",
+      "Value": "GalaxyStarType"
+    },
+    {
+      "Key": "RI1",
+      "Value": "ForceOverridesAll"
+    },
+    {
+      "Key": "RQA",
+      "Value": "MaintenanceInteractions"
+    },
+    {
+      "Key": "RVl",
+      "Value": "Palette"
+    },
+    {
+      "Key": "Rf8",
+      "Value": "MilestoneWithStageLocId"
+    },
+    {
+      "Key": "RiP",
+      "Value": "CookingIngredientsLayout"
+    },
+    {
+      "Key": "Rlk",
+      "Value": "MinAmountOfSubstanceAvailable"
+    },
+    {
+      "Key": "Rol",
+      "Value": "SeasonData"
+    },
+    {
+      "Key": "RuA",
+      "Value": "RequiresSpacePoiType"
+    },
+    {
+      "Key": "S5O",
+      "Value": "SquadronPilots"
+    },
+    {
+      "Key": "S9I",
+      "Value": "AllowOverriddenBuildings"
+    },
+    {
+      "Key": "S>>",
+      "Value": "UseBiomeSubType"
+    },
+    {
+      "Key": "S@3",
+      "Value": "ReputationGainDifficulty"
+    },
+    {
+      "Key": "SCS",
+      "Value": "Teach"
+    },
+    {
+      "Key": "SDg",
+      "Value": "UseRandomPet"
+    },
+    {
+      "Key": "SEK",
+      "Value": "SavedRaceIndicies"
+    },
+    {
+      "Key": "SLc",
+      "Value": "ResourceSeed"
+    },
+    {
+      "Key": "SMP",
+      "Value": "DescriptorGroups"
+    },
+    {
+      "Key": "SQw",
+      "Value": "WhaleEvent"
+    },
+    {
+      "Key": "SS2",
+      "Value": "Race"
+    },
+    {
+      "Key": "SSo",
+      "Value": "EventId"
+    },
+    {
+      "Key": "SYl",
+      "Value": "StartingSecondaryWeapon"
+    },
+    {
+      "Key": "SaB",
+      "Value": "Payload"
+    },
+    {
+      "Key": "Sd6",
+      "Value": "NextLoadSpawnsWithFreshStart"
+    },
+    {
+      "Key": "SdQ",
+      "Value": "NPCPopulationDifficulty"
+    },
+    {
+      "Key": "SiU",
+      "Value": "UseSpawnBuildingNearUDA"
+    },
+    {
+      "Key": "Sjw",
+      "Value": "CurrentFreighterNPC"
+    },
+    {
+      "Key": "Sks",
+      "Value": "AlwaysUseSeasonalStationTradeData"
+    },
+    {
+      "Key": "SnP",
+      "Value": "TooltipRepeats"
+    },
+    {
+      "Key": "SnZ",
+      "Value": "SwitchContextSaveDataMask"
+    },
+    {
+      "Key": "SuJ",
+      "Value": "Multitools"
+    },
+    {
+      "Key": "SuM",
+      "Value": "FossilCategory"
+    },
+    {
+      "Key": "SwW",
+      "Value": "PurpleSystemsUnlocked"
+    },
+    {
+      "Key": "T=R",
+      "Value": "ProductionAccumulationCap"
+    },
+    {
+      "Key": "T>1",
+      "Value": "TextureOptions"
+    },
+    {
+      "Key": "T>Z",
+      "Value": "VRCameraOffset"
+    },
+    {
+      "Key": "TD8",
+      "Value": "Action"
+    },
+    {
+      "Key": "TG<",
+      "Value": "NeverAllowExtremeSentinelPlanet"
+    },
+    {
+      "Key": "TNK",
+      "Value": "CommunityCompleteMessageTitleOverride"
+    },
+    {
+      "Key": "TPK",
+      "Value": "ExpeditionDuration"
+    },
+    {
+      "Key": "TYf",
+      "Value": "ItemShopAvailabilityDifficulty"
+    },
+    {
+      "Key": "TbT",
+      "Value": "ChargeValue"
+    },
+    {
+      "Key": "TlS",
+      "Value": "DefaultCraftAmount"
+    },
+    {
+      "Key": "To;",
+      "Value": "FinalRewardSwitchAlt"
+    },
+    {
+      "Key": "TuK",
+      "Value": "HighPriceMod"
+    },
+    {
+      "Key": "TwN",
+      "Value": "RendezvousIndex"
+    },
+    {
+      "Key": "Tx@",
+      "Value": "BlockStormsAtStart"
+    },
+    {
+      "Key": "Ty=",
+      "Value": "ColourAlt"
+    },
+    {
+      "Key": "U2>",
+      "Value": "RequiredSettlementBuildingLevel"
+    },
+    {
+      "Key": "U6K",
+      "Value": "ProtectedEvents"
+    },
+    {
+      "Key": "U87",
+      "Value": "NextEventToTrigger"
+    },
+    {
+      "Key": "U:h",
+      "Value": "OverrideInteractionRace"
+    },
+    {
+      "Key": "U>8",
+      "Value": "UsesLegacyColours"
+    },
+    {
+      "Key": "UMx",
+      "Value": "NeedsSpecificCreature"
+    },
+    {
+      "Key": "UaL",
+      "Value": "RocketLockerLayout"
+    },
+    {
+      "Key": "Ubj",
+      "Value": "RequiredTech"
+    },
+    {
+      "Key": "Ubk",
+      "Value": "CurrencyCostDifficulty"
+    },
+    {
+      "Key": "Ue9",
+      "Value": "HasAccessToNexus"
+    },
+    {
+      "Key": "Ujq",
+      "Value": "HoverPopupIcon"
+    },
+    {
+      "Key": "UqY",
+      "Value": "GenerationID"
+    },
+    {
+      "Key": "UtG",
+      "Value": "TechnologyRarity"
+    },
+    {
+      "Key": "UyV",
+      "Value": "BlockShipPurchasesUntilMilestoneWithSeedComplete"
+    },
+    {
+      "Key": "V1o",
+      "Value": "Playlist"
+    },
+    {
+      "Key": "V3H",
+      "Value": "HasReward"
+    },
+    {
+      "Key": "V7R",
+      "Value": "AudioEvent"
+    },
+    {
+      "Key": "VFd",
+      "Value": "SelectedPreset"
+    },
+    {
+      "Key": "VOG",
+      "Value": "AllowUnsafeMatches"
+    },
+    {
+      "Key": "VPy",
+      "Value": "ScatterAmmo"
+    },
+    {
+      "Key": "VUh",
+      "Value": "EconomyInfluenceMultiplier"
+    },
+    {
+      "Key": "VZK",
+      "Value": "SolarSystemAttributesFallback"
+    },
+    {
+      "Key": "Vd<",
+      "Value": "IsRendezvous"
+    },
+    {
+      "Key": "VhC",
+      "Value": "PersonalMaintenanceInteractions"
+    },
+    {
+      "Key": "Vn8",
+      "Value": "Type"
+    },
+    {
+      "Key": "W8B",
+      "Value": "Triggers"
+    },
+    {
+      "Key": "W=G",
+      "Value": "CraftAmountStepSize"
+    },
+    {
+      "Key": "WA4",
+      "Value": "StackSizeGroup"
+    },
+    {
+      "Key": "WC1",
+      "Value": "PlanetLabelText"
+    },
+    {
+      "Key": "WQX",
+      "Value": "HasBeenSummoned"
+    },
+    {
+      "Key": "WX8",
+      "Value": "InventoryIndex"
+    },
+    {
+      "Key": "WZs",
+      "Value": "DamagedFrigateIndices"
+    },
+    {
+      "Key": "WmI",
+      "Value": "IsOptional"
+    },
+    {
+      "Key": "WoW",
+      "Value": "HeroIcon"
+    },
+    {
+      "Key": "Wu?",
+      "Value": "SavedInteractionDialogTable"
+    },
+    {
+      "Key": "Wv?",
+      "Value": "RequiredSpecialId"
+    },
+    {
+      "Key": "X;b",
+      "Value": "Customisation"
+    },
+    {
+      "Key": "XEk",
+      "Value": "SeasonStartMusicOverride"
+    },
+    {
+      "Key": "XJ>",
+      "Value": "Y"
+    },
+    {
+      "Key": "XJC",
+      "Value": "IntroSequencePOI"
+    },
+    {
+      "Key": "XQ1",
+      "Value": "ClusterIndex"
+    },
+    {
+      "Key": "XTp",
+      "Value": "ActiveContext"
+    },
+    {
+      "Key": "XV5",
+      "Value": "Flags"
+    },
+    {
+      "Key": "XeZ",
+      "Value": "RefinerBufferData"
+    },
+    {
+      "Key": "XgV",
+      "Value": "Chest5Layout"
+    },
+    {
+      "Key": "Xs1",
+      "Value": "PendingCustomJudgementID"
+    },
+    {
+      "Key": "XvU",
+      "Value": "PointState"
+    },
+    {
+      "Key": "XwC",
+      "Value": "BirthTime"
+    },
+    {
+      "Key": "XyV",
+      "Value": "StaticTag"
+    },
+    {
+      "Key": "Y3<",
+      "Value": "TriggerActions"
+    },
+    {
+      "Key": "Y4s",
+      "Value": "PopupButton"
+    },
+    {
+      "Key": "Y5p",
+      "Value": "Number"
+    },
+    {
+      "Key": "Y7c",
+      "Value": "IsEncrypted"
+    },
+    {
+      "Key": "Y:t",
+      "Value": "LogDescOverride"
+    },
+    {
+      "Key": "YE6",
+      "Value": "TooltipMessage"
+    },
+    {
+      "Key": "YFE",
+      "Value": "Patch"
+    },
+    {
+      "Key": "YIB",
+      "Value": "Procedural"
+    },
+    {
+      "Key": "YJU",
+      "Value": "GraveMatrixUp"
+    },
+    {
+      "Key": "YNb",
+      "Value": "UseDefaultAppearance"
+    },
+    {
+      "Key": "YTa",
+      "Value": "Location"
+    },
+    {
+      "Key": "YaV",
+      "Value": "DrainedTerrainResourceDeposits"
+    },
+    {
+      "Key": "YeP",
+      "Value": "IsTechbox"
+    },
+    {
+      "Key": "Yq<",
+      "Value": "Answers"
+    },
+    {
+      "Key": "YsL",
+      "Value": "PlaceMarkerAtTaggedNode"
+    },
+    {
+      "Key": "YvA",
+      "Value": "WonderCustomRecordsExtraData"
+    },
+    {
+      "Key": "YxD",
+      "Value": "MultiplayerUA"
+    },
+    {
+      "Key": "Z8l",
+      "Value": "FarmPlantsTimerMul"
+    },
+    {
+      "Key": "Z=p",
+      "Value": "CommunityTierProgressLabel"
+    },
+    {
+      "Key": "ZAB",
+      "Value": "OverrideGameTableConfig"
+    },
+    {
+      "Key": "ZM<",
+      "Value": "MinAmountOfProductAvailable"
+    },
+    {
+      "Key": "ZNr",
+      "Value": "DescriptionDone"
+    },
+    {
+      "Key": "ZW9",
+      "Value": "WorldColour"
+    },
+    {
+      "Key": "ZbV",
+      "Value": "CombatTimerDifficultyOption"
+    },
+    {
+      "Key": "ZeS",
+      "Value": "ActiveSurvivalBarsDifficulty"
+    },
+    {
+      "Key": "ZlO",
+      "Value": "ReplacementMaintData"
+    },
+    {
+      "Key": "Zq4",
+      "Value": "StackMultiplier"
+    },
+    {
+      "Key": "a2U",
+      "Value": "PetBattlerTreatsAvailable"
+    },
+    {
+      "Key": "a4X",
+      "Value": "NeedsEmptySystem"
+    },
+    {
+      "Key": "a6j",
+      "Value": "StoredInteractions"
+    },
+    {
+      "Key": "a7Y",
+      "Value": "CustomFrigateFlybyTimer"
+    },
+    {
+      "Key": "a=X",
+      "Value": "PinnedStage"
+    },
+    {
+      "Key": "aBE",
+      "Value": "PrimaryShip"
+    },
+    {
+      "Key": "aCb",
+      "Value": "CommunityTeam"
+    },
+    {
+      "Key": "aGL",
+      "Value": "InterstellarOSDMessage"
+    },
+    {
+      "Key": "aHM",
+      "Value": "PlanetPositions"
+    },
+    {
+      "Key": "aLN",
+      "Value": "StartWithIntroQuizID"
+    },
+    {
+      "Key": "aNF",
+      "Value": "BannerTitleId"
+    },
+    {
+      "Key": "aNu",
+      "Value": "At"
+    },
+    {
+      "Key": "aPn",
+      "Value": "ShopNumber"
+    },
+    {
+      "Key": "aRZ",
+      "Value": "RewardCollected"
+    },
+    {
+      "Key": "aS@",
+      "Value": "LowPriceMod"
+    },
+    {
+      "Key": "aVB",
+      "Value": "SeenStories"
+    },
+    {
+      "Key": "aZF",
+      "Value": "AnyRGBBiome"
+    },
+    {
+      "Key": "abj",
+      "Value": "ProductionState"
+    },
+    {
+      "Key": "aop",
+      "Value": "TechShopType"
+    },
+    {
+      "Key": "apL",
+      "Value": "InitialJoaoBox"
+    },
+    {
+      "Key": "apf",
+      "Value": "StartPlanetRareSubstanceOverride"
+    },
+    {
+      "Key": "aw9",
+      "Value": "WarpDriveRequirements"
+    },
+    {
+      "Key": "b1:",
+      "Value": "Timestamp"
+    },
+    {
+      "Key": "b2n",
+      "Value": "Id"
+    },
+    {
+      "Key": "b69",
+      "Value": "TradingSupplyData"
+    },
+    {
+      "Key": "b6M",
+      "Value": "Ownership"
+    },
+    {
+      "Key": "b76",
+      "Value": "FullyInstalled"
+    },
+    {
+      "Key": "b78",
+      "Value": "InterventionPhoneCallActivated"
+    },
+    {
+      "Key": "b>7",
+      "Value": "SuitableForCreatureDiscovery"
+    },
+    {
+      "Key": "b>d",
+      "Value": "SpeedMultiplier"
+    },
+    {
+      "Key": "b@r",
+      "Value": "TimeStamp"
+    },
+    {
+      "Key": "bIR",
+      "Value": "CurrentFreighter"
+    },
+    {
+      "Key": "bLP",
+      "Value": "ShipType"
+    },
+    {
+      "Key": "bSn",
+      "Value": "DifficultySettingPreset"
+    },
+    {
+      "Key": "bVe",
+      "Value": "OnlyCorvetteLauncherCanBeRepaired"
+    },
+    {
+      "Key": "bW7",
+      "Value": "PackageType"
+    },
+    {
+      "Key": "bbB",
+      "Value": "Success"
+    },
+    {
+      "Key": "bnC",
+      "Value": "StartNextToShip"
+    },
+    {
+      "Key": "brV",
+      "Value": "Available"
+    },
+    {
+      "Key": "bv;",
+      "Value": "StartingPetSlots"
+    },
+    {
+      "Key": "bxn",
+      "Value": "ProductTable"
+    },
+    {
+      "Key": "c=A",
+      "Value": "AltRequirements"
+    },
+    {
+      "Key": "cD>",
+      "Value": "NeedsResourceHint"
+    },
+    {
+      "Key": "cI>",
+      "Value": "BaseAutoPowerSetting"
+    },
+    {
+      "Key": "cKn",
+      "Value": "AllowSaveContextMultitoolTransfer"
+    },
+    {
+      "Key": "cL6",
+      "Value": "BufferAnchors"
+    },
+    {
+      "Key": "cO>",
+      "Value": "LaserAmmo"
+    },
+    {
+      "Key": "cPt",
+      "Value": "BuildersKnown"
+    },
+    {
+      "Key": "cQc",
+      "Value": "ChargeMultiplier"
+    },
+    {
+      "Key": "cYk",
+      "Value": "DamageReceivedDifficulty"
+    },
+    {
+      "Key": "cf5",
+      "Value": "Outfits"
+    },
+    {
+      "Key": "cjs",
+      "Value": "CommunityTierCompleteLabel"
+    },
+    {
+      "Key": "cmA",
+      "Value": "HoloExplorerInteraction"
+    },
+    {
+      "Key": "d2f",
+      "Value": "AuthorPlatform"
+    },
+    {
+      "Key": "d3x",
+      "Value": "BuildingStates"
+    },
+    {
+      "Key": "d40",
+      "Value": "NeverAllowShipPurchases"
+    },
+    {
+      "Key": "d72",
+      "Value": "NexusMatrixUp"
+    },
+    {
+      "Key": "d<k",
+      "Value": "SellPriceDecreaseRedThreshold"
+    },
+    {
+      "Key": "dAR",
+      "Value": "TargetMustMatchMissionSeed"
+    },
+    {
+      "Key": "dZj",
+      "Value": "VoxelX"
+    },
+    {
+      "Key": "dcK",
+      "Value": "Energy"
+    },
+    {
+      "Key": "dgv",
+      "Value": "NeverTradeProducts"
+    },
+    {
+      "Key": "dlm",
+      "Value": "MinPlanets"
+    },
+    {
+      "Key": "dmU",
+      "Value": "ScreenRotation"
+    },
+    {
+      "Key": "dn2",
+      "Value": "StartWithFreighter"
+    },
+    {
+      "Key": "duU",
+      "Value": "R"
+    },
+    {
+      "Key": "e4G",
+      "Value": "HazardProtectionDrainMultiplier"
+    },
+    {
+      "Key": "e?Y",
+      "Value": "WonderTreasureRecords"
+    },
+    {
+      "Key": "e@O",
+      "Value": "SystemNeedsWeirdPlanet"
+    },
+    {
+      "Key": "eD?",
+      "Value": "OnlyFoundInPurpleSytems"
+    },
+    {
+      "Key": "eEU",
+      "Value": "ShipClass"
+    },
+    {
+      "Key": "eK9",
+      "Value": "EggModified"
+    },
+    {
+      "Key": "eOL",
+      "Value": "AllSlotsUnlocked"
+    },
+    {
+      "Key": "eV1",
+      "Value": "IsNew"
+    },
+    {
+      "Key": "eVk",
+      "Value": "DamageFactor"
+    },
+    {
+      "Key": "eZ7",
+      "Value": "Participants"
+    },
+    {
+      "Key": "eb6",
+      "Value": "FishBaitBoxLayout"
+    },
+    {
+      "Key": "ecs",
+      "Value": "SolarSystemAttributes"
+    },
+    {
+      "Key": "ee<",
+      "Value": "OverrideSpacePoiEncounter"
+    },
+    {
+      "Key": "eem",
+      "Value": "ProductCategory"
+    },
+    {
+      "Key": "ef4",
+      "Value": "BreakTechOnDamageProbability"
+    },
+    {
+      "Key": "eiy",
+      "Value": "BufferSizes"
+    },
+    {
+      "Key": "ekO",
+      "Value": "SpacePoiDiscoveries"
+    },
+    {
+      "Key": "elv",
+      "Value": "InventoryType"
+    },
+    {
+      "Key": "eoL",
+      "Value": "FloatValue"
+    },
+    {
+      "Key": "erT",
+      "Value": "HasCollectedFinalReward"
+    },
+    {
+      "Key": "eyv",
+      "Value": "LastCompletedTimestamp"
+    },
+    {
+      "Key": "f5Q",
+      "Value": "LID"
+    },
+    {
+      "Key": "fCh",
+      "Value": "ChestMagic2Inventory"
+    },
+    {
+      "Key": "fDu",
+      "Value": "DiscoveryManagerData"
+    },
+    {
+      "Key": "fH7",
+      "Value": "FreighterBaseOverrideFilename"
+    },
+    {
+      "Key": "fH8",
+      "Value": "CustomName"
+    },
+    {
+      "Key": "fSZ",
+      "Value": "Health"
+    },
+    {
+      "Key": "fe2",
+      "Value": "AffectedFrigateResponses"
+    },
+    {
+      "Key": "fgt",
+      "Value": "ReserveStore"
+    },
+    {
+      "Key": "fjE",
+      "Value": "PetBattlerMoveList"
+    },
+    {
+      "Key": "fp9",
+      "Value": "WonderFloraRecords"
+    },
+    {
+      "Key": "fvN",
+      "Value": "IsInterventionEvent"
+    },
+    {
+      "Key": "g33",
+      "Value": "ArchivedShipOwnership"
+    },
+    {
+      "Key": "g49",
+      "Value": "SuitableForCreatureTaming"
+    },
+    {
+      "Key": "g9F",
+      "Value": "StartingSuitCargoSlots"
+    },
+    {
+      "Key": "gEp",
+      "Value": "DbVersion"
+    },
+    {
+      "Key": "gGT",
+      "Value": "ForceWideRandom"
+    },
+    {
+      "Key": "gIh",
+      "Value": "GraveMatrixLookAt"
+    },
+    {
+      "Key": "gNy",
+      "Value": "FreighterBase"
+    },
+    {
+      "Key": "gUR",
+      "Value": "Stats"
+    },
+    {
+      "Key": "gWW",
+      "Value": "HintEnd"
+    },
+    {
+      "Key": "gan",
+      "Value": "Inventory_Cargo"
+    },
+    {
+      "Key": "gd>",
+      "Value": "BreakTechOnDamage"
+    },
+    {
+      "Key": "gjm",
+      "Value": "NeverAllowExtremeWeatherPlanet"
+    },
+    {
+      "Key": "gk4",
+      "Value": "Facing"
+    },
+    {
+      "Key": "gnU",
+      "Value": "MissionMessageOnInteract"
+    },
+    {
+      "Key": "gou",
+      "Value": "SeasonId"
+    },
+    {
+      "Key": "grs",
+      "Value": "TransferPopupDesc"
+    },
+    {
+      "Key": "gsg",
+      "Value": "BoneScales"
+    },
+    {
+      "Key": "h=c",
+      "Value": "StartGameShipPosition"
+    },
+    {
+      "Key": "hMW",
+      "Value": "DbTimestamp"
+    },
+    {
+      "Key": "hQ1",
+      "Value": "Rarity"
+    },
+    {
+      "Key": "hXp",
+      "Value": "DamageReceived"
+    },
+    {
+      "Key": "he5",
+      "Value": "BlockRendezvousMilestoneSeed"
+    },
+    {
+      "Key": "hea",
+      "Value": "Powerups"
+    },
+    {
+      "Key": "hiD",
+      "Value": "NextBuildingUpgradeIndex"
+    },
+    {
+      "Key": "hiE",
+      "Value": "NexusUniverseAddress"
+    },
+    {
+      "Key": "hl?",
+      "Value": "ValidSlotIndices"
+    },
+    {
+      "Key": "ho8",
+      "Value": "IncreaseXClassTechOddsWithCommTier"
+    },
+    {
+      "Key": "huR",
+      "Value": "BaseStat"
+    },
+    {
+      "Key": "hy2",
+      "Value": "ClearForcedInteractionOnCompletion"
+    },
+    {
+      "Key": "hyA",
+      "Value": "StartTimeUTC"
+    },
+    {
+      "Key": "i1<",
+      "Value": "MainMissionMessage"
+    },
+    {
+      "Key": "i7<",
+      "Value": "HintStart"
+    },
+    {
+      "Key": "i8O",
+      "Value": "TimeAlive"
+    },
+    {
+      "Key": "i;<",
+      "Value": "NewMPMarkerStack"
+    },
+    {
+      "Key": "iBF",
+      "Value": "RecipeCost"
+    },
+    {
+      "Key": "iBI",
+      "Value": "NeverLearnableTech"
+    },
+    {
+      "Key": "iIi",
+      "Value": "ExcludePlanetsWithEvents"
+    },
+    {
+      "Key": "iMl",
+      "Value": "CantClaimRewardDescription"
+    },
+    {
+      "Key": "iYp",
+      "Value": "Chest4Inventory"
+    },
+    {
+      "Key": "iaH",
+      "Value": "AffectedFrigateIndices"
+    },
+    {
+      "Key": "idA",
+      "Value": "GameMode"
+    },
+    {
+      "Key": "imU",
+      "Value": "NextQuestionID"
+    },
+    {
+      "Key": "iqv",
+      "Value": "BuildingClass"
+    },
+    {
+      "Key": "isp",
+      "Value": "PetBattlerUseCoreStatClassOverrides"
+    },
+    {
+      "Key": "iv3",
+      "Value": "TransferPopupButton"
+    },
+    {
+      "Key": "j30",
+      "Value": "PetAccessoryCustomisation"
+    },
+    {
+      "Key": "j3E",
+      "Value": "ActiveMultioolIndex"
+    },
+    {
+      "Key": "j3Y",
+      "Value": "PhotoModeSettings"
+    },
+    {
+      "Key": "j6d",
+      "Value": "UseCommunityTeamPalettes"
+    },
+    {
+      "Key": "j?y",
+      "Value": "AcceptGood"
+    },
+    {
+      "Key": "jA9",
+      "Value": "ShipStartsDamaged"
+    },
+    {
+      "Key": "jGh",
+      "Value": "GroundCombatTimers"
+    },
+    {
+      "Key": "jH@",
+      "Value": "SubstanceCollection"
+    },
+    {
+      "Key": "jN4",
+      "Value": "Layer"
+    },
+    {
+      "Key": "jZW",
+      "Value": "PercentageOfItemsAreProducts"
+    },
+    {
+      "Key": "jl;",
+      "Value": "SecondaryMode"
+    },
+    {
+      "Key": "jmj",
+      "Value": "ForceAllSystemsAbandoned"
+    },
+    {
+      "Key": "jnM",
+      "Value": "FuelUse"
+    },
+    {
+      "Key": "jqx",
+      "Value": "EndTimeUTC"
+    },
+    {
+      "Key": "jtr",
+      "Value": "PetBattlerMoves"
+    },
+    {
+      "Key": "k8N",
+      "Value": "HotActions"
+    },
+    {
+      "Key": "k?G",
+      "Value": "CurrentMissionSeed"
+    },
+    {
+      "Key": "kFw",
+      "Value": "SkiffData"
+    },
+    {
+      "Key": "kLc",
+      "Value": "Shield"
+    },
+    {
+      "Key": "kN;",
+      "Value": "Specials"
+    },
+    {
+      "Key": "kOX",
+      "Value": "SpecificChargeOnly"
+    },
+    {
+      "Key": "kOi",
+      "Value": "UseConflict"
+    },
+    {
+      "Key": "kPy",
+      "Value": "HasBeenConverted"
+    },
+    {
+      "Key": "kSe",
+      "Value": "PersistentPOI"
+    },
+    {
+      "Key": "kVv",
+      "Value": "TSrec"
+    },
+    {
+      "Key": "kYq",
+      "Value": "CurrentFreighterHomeSystemSeed"
+    },
+    {
+      "Key": "kZ5",
+      "Value": "InventoryStackLimits"
+    },
+    {
+      "Key": "kpg",
+      "Value": "MultiplayerPrivileges"
+    },
+    {
+      "Key": "kr6",
+      "Value": "Milestones"
+    },
+    {
+      "Key": "ksu",
+      "Value": "OWS"
+    },
+    {
+      "Key": "l29",
+      "Value": "SprintingCost"
+    },
+    {
+      "Key": "l2U",
+      "Value": "PlayerTransformAt"
+    },
+    {
+      "Key": "l:j",
+      "Value": "CharacterCustomisationData"
+    },
+    {
+      "Key": "l?S",
+      "Value": "Consumable"
+    },
+    {
+      "Key": "l?l",
+      "Value": "Direction"
+    },
+    {
+      "Key": "lI?",
+      "Value": "AcceptFair"
+    },
+    {
+      "Key": "lKr",
+      "Value": "ShipHovering"
+    },
+    {
+      "Key": "lU2",
+      "Value": "TeamShipSeeds"
+    },
+    {
+      "Key": "leA",
+      "Value": "ByteBeatJukebox"
+    },
+    {
+      "Key": "leC",
+      "Value": "IsStageControl"
+    },
+    {
+      "Key": "ll<",
+      "Value": "SwarmMonumentShowWhenMissionComplete"
+    },
+    {
+      "Key": "lpm",
+      "Value": "FreighterMatrixPos"
+    },
+    {
+      "Key": "lx1",
+      "Value": "ReplaceEventIfAlreadyActive"
+    },
+    {
+      "Key": "m4I",
+      "Value": "TelemetryStats"
+    },
+    {
+      "Key": "m5Q",
+      "Value": "ForceInteractionType"
+    },
+    {
+      "Key": "m7b",
+      "Value": "AuthorOnlineID"
+    },
+    {
+      "Key": "m9o",
+      "Value": "SpeciesSeed"
+    },
+    {
+      "Key": "m<F",
+      "Value": "LongestProfitStretch"
+    },
+    {
+      "Key": "mEH",
+      "Value": "PlayerPositionInSystem"
+    },
+    {
+      "Key": "mRF",
+      "Value": "FocusLocator"
+    },
+    {
+      "Key": "man",
+      "Value": "CustomTruckPresetNames"
+    },
+    {
+      "Key": "me6",
+      "Value": "UseMissionTradingDataOverride"
+    },
+    {
+      "Key": "mum",
+      "Value": "DamageGivenDifficulty"
+    },
+    {
+      "Key": "myI",
+      "Value": "Description"
+    },
+    {
+      "Key": "n5h",
+      "Value": "PinObjectiveEasyToRefine"
+    },
+    {
+      "Key": "n7p",
+      "Value": "DeathConsequences"
+    },
+    {
+      "Key": "n:R",
+      "Value": "SaveSummary"
+    },
+    {
+      "Key": "n>y",
+      "Value": "SubstanceTable"
+    },
+    {
+      "Key": "nEA",
+      "Value": "BarterPriceMultiplier"
+    },
+    {
+      "Key": "nHK",
+      "Value": "FoodUnitInventory"
+    },
+    {
+      "Key": "nS>",
+      "Value": "MustMatchStoryUtilityPuzzle"
+    },
+    {
+      "Key": "nTB",
+      "Value": "FirstShipPosition"
+    },
+    {
+      "Key": "nUp",
+      "Value": "RequiredSpacePoiDiscoveryLevel"
+    },
+    {
+      "Key": "nW;",
+      "Value": "RequiredLevel"
+    },
+    {
+      "Key": "nhq",
+      "Value": "ChargingRequirements"
+    },
+    {
+      "Key": "nkF",
+      "Value": "TradingSupplyDataIndex"
+    },
+    {
+      "Key": "nlG",
+      "Value": "TeleportEndpoints"
+    },
+    {
+      "Key": "nsH",
+      "Value": "FoodUnitItem"
+    },
+    {
+      "Key": "nw5",
+      "Value": "Chest6Layout"
+    },
+    {
+      "Key": "nwS",
+      "Value": "VisitedSystems"
+    },
+    {
+      "Key": "nx=",
+      "Value": "MessageDisplayTime"
+    },
+    {
+      "Key": "nxr",
+      "Value": "LastKnownDay"
+    },
+    {
+      "Key": "o1O",
+      "Value": "NeverAllowGasGiantSystem"
+    },
+    {
+      "Key": "o:9",
+      "Value": "IsProduct"
+    },
+    {
+      "Key": "oBB",
+      "Value": "StartAboardFreighter"
+    },
+    {
+      "Key": "oCR",
+      "Value": "BugAttackCount"
+    },
+    {
+      "Key": "oEc",
+      "Value": "IsStoryPortal"
+    },
+    {
+      "Key": "oHw",
+      "Value": "Forward"
+    },
+    {
+      "Key": "oJJ",
+      "Value": "CurrentShip"
+    },
+    {
+      "Key": "oQl",
+      "Value": "RestartAllInactiveSeasonalMissions"
+    },
+    {
+      "Key": "oew",
+      "Value": "DisplayNumber"
+    },
+    {
+      "Key": "ofi",
+      "Value": "RegionSeed"
+    },
+    {
+      "Key": "omN",
+      "Value": "NumberOfSuccessfulEventsThisExpedition"
+    },
+    {
+      "Key": "p0c",
+      "Value": "Mission"
+    },
+    {
+      "Key": "p4U",
+      "Value": "AdditionalKnownProducts"
+    },
+    {
+      "Key": "p<6",
+      "Value": "SystemNeedsResourceHint"
+    },
+    {
+      "Key": "pBH",
+      "Value": "MissionIconSelected"
+    },
+    {
+      "Key": "pFl",
+      "Value": "PinObjectiveScannableType"
+    },
+    {
+      "Key": "pG4",
+      "Value": "SurveyDiscoveryOSDMessage"
+    },
+    {
+      "Key": "pNt",
+      "Value": "BaseUA"
+    },
+    {
+      "Key": "pQJ",
+      "Value": "FreighterCargoLayout"
+    },
+    {
+      "Key": "pS0",
+      "Value": "InventoriesAlwaysInRange"
+    },
+    {
+      "Key": "pU@",
+      "Value": "SeasonName"
+    },
+    {
+      "Key": "peI",
+      "Value": "BaseType"
+    },
+    {
+      "Key": "pfp",
+      "Value": "Demand"
+    },
+    {
+      "Key": "psf",
+      "Value": "MilestoneValues"
+    },
+    {
+      "Key": "pwI",
+      "Value": "AlwaysPresentSubstances"
+    },
+    {
+      "Key": "pwt",
+      "Value": "PresetGameMode"
+    },
+    {
+      "Key": "pxy",
+      "Value": "TechCostMultiplier"
+    },
+    {
+      "Key": "q08",
+      "Value": "ResourceElement"
+    },
+    {
+      "Key": "q2@",
+      "Value": "DeathConsequencesDifficulty"
+    },
+    {
+      "Key": "q5B",
+      "Value": "QuestSubstanceReducer"
+    },
+    {
+      "Key": "q5u",
+      "Value": "CN"
+    },
+    {
+      "Key": "qAx",
+      "Value": "Fog"
+    },
+    {
+      "Key": "qFl",
+      "Value": "TelemetryUploadVersion"
+    },
+    {
+      "Key": "qH0",
+      "Value": "SpecificPartyIndexToSearchFrom"
+    },
+    {
+      "Key": "qJ7",
+      "Value": "SeenBaseBuildingObjects"
+    },
+    {
+      "Key": "qK9",
+      "Value": "SeedValue"
+    },
+    {
+      "Key": "qLk",
+      "Value": "SunDir"
+    },
+    {
+      "Key": "qMN",
+      "Value": "CachedPlayerCommunityTeam"
+    },
+    {
+      "Key": "qW;",
+      "Value": "PortalMarkerPosition_Offset"
+    },
+    {
+      "Key": "qbd",
+      "Value": "PrimaryItem"
+    },
+    {
+      "Key": "qfQ",
+      "Value": "RandomPetConstraints"
+    },
+    {
+      "Key": "qr=",
+      "Value": "SettlerDeathCount"
+    },
+    {
+      "Key": "r:j",
+      "Value": "GalacticAddresses"
+    },
+    {
+      "Key": "r<7",
+      "Value": "ObjectID"
+    },
+    {
+      "Key": "rBK",
+      "Value": "FishBaitBoxInventory"
+    },
+    {
+      "Key": "rHh",
+      "Value": "CookingIngredient"
+    },
+    {
+      "Key": "rRe",
+      "Value": "Image"
+    },
+    {
+      "Key": "rXy",
+      "Value": "CorvetteEditAssociatedShipIndex"
+    },
+    {
+      "Key": "rbc",
+      "Value": "IsCommunityPortalOverride"
+    },
+    {
+      "Key": "rlt",
+      "Value": "FishPlatformLayout"
+    },
+    {
+      "Key": "rnc",
+      "Value": "SpawnStateData"
+    },
+    {
+      "Key": "rr0",
+      "Value": "LastJudgementPerkID"
+    },
+    {
+      "Key": "rri",
+      "Value": "InventoryStackSizeGroup"
+    },
+    {
+      "Key": "s2L",
+      "Value": "AdditionalTradeProducts"
+    },
+    {
+      "Key": "s4E",
+      "Value": "DiscoveryType"
+    },
+    {
+      "Key": "s8f",
+      "Value": "Shuffle"
+    },
+    {
+      "Key": "s;F",
+      "Value": "Cost"
+    },
+    {
+      "Key": "sM@",
+      "Value": "KeyActions"
+    },
+    {
+      "Key": "sNc",
+      "Value": "ShipTechInventoryLayout"
+    },
+    {
+      "Key": "sOC",
+      "Value": "SpacePoiSetToUndiscovered"
+    },
+    {
+      "Key": "sSS",
+      "Value": "PackedData1"
+    },
+    {
+      "Key": "sbg",
+      "Value": "ActiveFrigateIndices"
+    },
+    {
+      "Key": "seg",
+      "Value": "Hazard"
+    },
+    {
+      "Key": "sng",
+      "Value": "PlayerKillCount"
+    },
+    {
+      "Key": "sti",
+      "Value": "TrashInventoryOnGalaxyTravel"
+    },
+    {
+      "Key": "sus",
+      "Value": "HasScannedToReveal"
+    },
+    {
+      "Key": "t<Q",
+      "Value": "TowerPowerTimeStamps"
+    },
+    {
+      "Key": "tDR",
+      "Value": "LastEggTime"
+    },
+    {
+      "Key": "tEx",
+      "Value": "ActiveSurvivalBars"
+    },
+    {
+      "Key": "tIM",
+      "Value": "AmountAccumulators"
+    },
+    {
+      "Key": "tIm",
+      "Value": "BoneName"
+    },
+    {
+      "Key": "tLA",
+      "Value": "MinItemsForSale"
+    },
+    {
+      "Key": "tLo",
+      "Value": "Chest7Layout"
+    },
+    {
+      "Key": "tNA",
+      "Value": "RequireDefaultGameTableConfig"
+    },
+    {
+      "Key": "tQD",
+      "Value": "SystemNeedsWater"
+    },
+    {
+      "Key": "tSD",
+      "Value": "RevealBlackHoles"
+    },
+    {
+      "Key": "tV6",
+      "Value": "NeedsExtremeSentinelPlanet"
+    },
+    {
+      "Key": "tVi",
+      "Value": "CorvetteEditShipName"
+    },
+    {
+      "Key": "tW6",
+      "Value": "Progress"
+    },
+    {
+      "Key": "tdR",
+      "Value": "TakeImageFromItemIcon"
+    },
+    {
+      "Key": "tiH",
+      "Value": "U"
+    },
+    {
+      "Key": "tj1",
+      "Value": "OwnerPlatformId"
+    },
+    {
+      "Key": "tmM",
+      "Value": "PlayerDeathRespawnPositionInSystem"
+    },
+    {
+      "Key": "tnP",
+      "Value": "ShipPositionInSystem"
+    },
+    {
+      "Key": "ttq",
+      "Value": "SenderData"
+    },
+    {
+      "Key": "tww",
+      "Value": "IsFeatured"
+    },
+    {
+      "Key": "u75",
+      "Value": "PetBattlerVictories"
+    },
+    {
+      "Key": "uAX",
+      "Value": "ColourBaseSeed"
+    },
+    {
+      "Key": "uAt",
+      "Value": "FreighterTransformAt"
+    },
+    {
+      "Key": "uEG",
+      "Value": "BuyMarkupMod"
+    },
+    {
+      "Key": "uK<",
+      "Value": "ChargeType"
+    },
+    {
+      "Key": "uLa",
+      "Value": "BuildingPreventionDisallowBuilding"
+    },
+    {
+      "Key": "uTm",
+      "Value": "UseSpookHazardOnly"
+    },
+    {
+      "Key": "uWE",
+      "Value": "CanSendToOtherPlayers"
+    },
+    {
+      "Key": "ujr",
+      "Value": "PetBattlerTreatsEaten"
+    },
+    {
+      "Key": "ulQ",
+      "Value": "BiomeSubType"
+    },
+    {
+      "Key": "unY",
+      "Value": "Scale"
+    },
+    {
+      "Key": "uo4",
+      "Value": "BaseAutoPower"
+    },
+    {
+      "Key": "uuW",
+      "Value": "GiftsRecieved"
+    },
+    {
+      "Key": "uw7",
+      "Value": "FrigateClass"
+    },
+    {
+      "Key": "ux@",
+      "Value": "PreviousUniverseAddress"
+    },
+    {
+      "Key": "v8;",
+      "Value": "ChestMagicLayout"
+    },
+    {
+      "Key": "v=L",
+      "Value": "TotalNumberOfSuccessfulEvents"
+    },
+    {
+      "Key": "vLc",
+      "Value": "BaseContext"
+    },
+    {
+      "Key": "vR5",
+      "Value": "PetBattleTeam"
+    },
+    {
+      "Key": "vXX",
+      "Value": "MultiplayerLobbyID"
+    },
+    {
+      "Key": "vaK",
+      "Value": "SystemNeedsCorruptSentinelPlanet"
+    },
+    {
+      "Key": "vaP",
+      "Value": "FirstSpawnPosition"
+    },
+    {
+      "Key": "vby",
+      "Value": "SolarSystemIndex"
+    },
+    {
+      "Key": "vnq",
+      "Value": "RequiredRank"
+    },
+    {
+      "Key": "vo>",
+      "Value": "ReputationGain"
+    },
+    {
+      "Key": "vrS",
+      "Value": "KnownPortalRunes"
+    },
+    {
+      "Key": "vxi",
+      "Value": "PlayerFreighterName"
+    },
+    {
+      "Key": "vyN",
+      "Value": "LastEditedByUsername"
+    },
+    {
+      "Key": "vyR",
+      "Value": "SpacePoiDiscoveryLevel"
+    },
+    {
+      "Key": "w0G",
+      "Value": "BufferAges"
+    },
+    {
+      "Key": "wBA",
+      "Value": "PlayerOffer"
+    },
+    {
+      "Key": "wFw",
+      "Value": "IsCraftable"
+    },
+    {
+      "Key": "wGS",
+      "Value": "Units"
+    },
+    {
+      "Key": "wHR",
+      "Value": "InteractionProgressTable"
+    },
+    {
+      "Key": "wJ0",
+      "Value": "Up"
+    },
+    {
+      "Key": "wMC",
+      "Value": "Position"
+    },
+    {
+      "Key": "wZj",
+      "Value": "IgnoreCompletedSpacePoi"
+    },
+    {
+      "Key": "waR",
+      "Value": "NeedsCorruptSentinelPlanet"
+    },
+    {
+      "Key": "wb:",
+      "Value": "UsesThirdPersonVehicleCam"
+    },
+    {
+      "Key": "wd3",
+      "Value": "AlwaysShow"
+    },
+    {
+      "Key": "wem",
+      "Value": "CorvetteStorageInventory"
+    },
+    {
+      "Key": "wnR",
+      "Value": "CustomData"
+    },
+    {
+      "Key": "wqf",
+      "Value": "Chest10Layout"
+    },
+    {
+      "Key": "wyZ",
+      "Value": "RepairTechBuffer"
+    },
+    {
+      "Key": "x3<",
+      "Value": "Population"
+    },
+    {
+      "Key": "x5Z",
+      "Value": "RequireUndiscovered"
+    },
+    {
+      "Key": "x<b",
+      "Value": "MultiplayerSpawn"
+    },
+    {
+      "Key": "x>0",
+      "Value": "CompletedAtlasAddresses"
+    },
+    {
+      "Key": "xEg",
+      "Value": "Colour"
+    },
+    {
+      "Key": "xFq",
+      "Value": "BuyBaseMarkup"
+    },
+    {
+      "Key": "xHr",
+      "Value": "TeamID"
+    },
+    {
+      "Key": "xIx",
+      "Value": "OverrideColour"
+    },
+    {
+      "Key": "xO:",
+      "Value": "SuppressSpacePoiActivity"
+    },
+    {
+      "Key": "xSo",
+      "Value": "AkEvent"
+    },
+    {
+      "Key": "xbM",
+      "Value": "WeaponLayout"
+    },
+    {
+      "Key": "xgu",
+      "Value": "UsedPlatforms"
+    },
+    {
+      "Key": "xru",
+      "Value": "NextBuildingUpgradeSeedValue"
+    },
+    {
+      "Key": "xxK",
+      "Value": "ReserveManaged"
+    },
+    {
+      "Key": "y2R",
+      "Value": "OverrideGameTableGameConfig"
+    },
+    {
+      "Key": "y87",
+      "Value": "SeenInFrontend"
+    },
+    {
+      "Key": "y>3",
+      "Value": "InitialJoaoBoxNoMainSave"
+    },
+    {
+      "Key": "yF<",
+      "Value": "PagesData"
+    },
+    {
+      "Key": "yID",
+      "Value": "IdToUseInMissionData"
+    },
+    {
+      "Key": "yJC",
+      "Value": "RepairsMade"
+    },
+    {
+      "Key": "yV7",
+      "Value": "RendezvousParticipants"
+    },
+    {
+      "Key": "ycg",
+      "Value": "SystemNeedsInfestedPlanet"
+    },
+    {
+      "Key": "ydc",
+      "Value": "discoveries"
+    },
+    {
+      "Key": "yhJ",
+      "Value": "UniverseAddress"
+    },
+    {
+      "Key": "yma",
+      "Value": "WealthClass"
+    },
+    {
+      "Key": "yq:",
+      "Value": "MissionVersion"
+    },
+    {
+      "Key": "yqB",
+      "Value": "BufferVersion"
+    }
+  ]
+}

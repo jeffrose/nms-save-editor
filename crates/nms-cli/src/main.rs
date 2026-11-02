@@ -1,5 +1,6 @@
 //! `nmsedit` — inspect, verify and edit No Man's Sky save files.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -81,6 +82,11 @@ DATA (regenerated from a local game installation):
     nmsedit data info                    show the installed data pack
     nmsedit data lookup <id> [id...]     print game text by id
     nmsedit data item <id> [id...]       print item names by id (^ and ! prefixes ok)
+    nmsedit data mapping [--out <file>]  derive the field-name mapping from the
+                                         game's executable (with --saves <dir>,
+                                         limit it to the keys those saves use;
+                                         that builds the baseline compiled into
+                                         the editor)
 
 PATH SYNTAX:
     Dotted, readable names; array indices in brackets.
@@ -223,9 +229,9 @@ fn positional(args: &[String]) -> Vec<&str> {
 
 /// The mapping file used when `--mapping` is not given.
 ///
-/// The full ~1300-entry mapping is game data that is regenerated per game
-/// version (see the data pipeline milestone), so it is not vendored into the
-/// binary. It is picked up from `$NMSEDIT_MAPPING`, then
+/// A baseline covering the keys real saves use is compiled into the editor;
+/// this file is the *full* mapping, regenerated per game version by `data
+/// refresh`. It is picked up from `$NMSEDIT_MAPPING`, then
 /// `$XDG_CONFIG_HOME/nmsedit/mapping.json` (default `~/.config/...`).
 fn default_mapping_path() -> Option<PathBuf> {
     let base = match std::env::var("XDG_CONFIG_HOME") {
@@ -905,7 +911,10 @@ fn mapping_note(args: &[String]) -> String {
     }
     match default_mapping_path() {
         Some(path) if path.is_file() => format!(" ({})", path.display()),
-        Some(path) => format!(" (built-in only; install a full mapping at {})", path.display()),
+        Some(path) => format!(
+            " (built-in only; `nmsedit data refresh` writes the full mapping to {})",
+            path.display()
+        ),
         None => " (built-in only)".to_string(),
     }
 }
@@ -1386,13 +1395,42 @@ fn mapping_output_path(args: &[String], pack: &Path) -> PathBuf {
 /// the three-character key it writes, so the pairs can be rebuilt from the
 /// name tables in `NMS.exe`. An existing mapping file is merged in and wins —
 /// a maintained mapping is never overridden, only extended with keys it lacks.
+///
+/// With `--saves <dir>` the mapping is limited to the keys those saves use.
+/// That is how the baseline compiled into the editor is produced
+/// (`tools/build-baseline-mapping.sh`): a thousand entries instead of sixty
+/// thousand, small enough to ship. `--out` is required in that mode, so it can
+/// never overwrite the installed mapping by accident.
 fn cmd_data_mapping(args: &[String]) -> Result<(), String> {
     let install = nms_data::Install::discover(option(args, "--install").map(PathBuf::from).as_deref())
         .map_err(|error| error.to_string())?;
+    let binary = nms_data::find_game_binary(&install.root).map_err(|error| error.to_string())?;
+
+    if let Some(dir) = option(args, "--saves") {
+        let out = option(args, "--out").map(PathBuf::from).ok_or_else(|| {
+            "--saves needs --out <file>: it writes a scoped baseline, never the installed mapping".to_string()
+        })?;
+        let keys = collect_save_keys(Path::new(&dir))?;
+        let mapping =
+            nms_data::write_mapping_for_keys(&install.root, &keys, &out).map_err(|error| error.to_string())?;
+
+        println!("installation    {}", install.root.display());
+        println!("binary          {}", binary.display());
+        println!("saves           {} keys used by the saves under {dir}", keys.len());
+        println!(
+            "keys resolved   {} (a name is only kept when its key is unique)",
+            mapping.report.unique_keys
+        );
+        println!("keys dropped    {} (two names hashed to the same key)", mapping.report.ambiguous_keys);
+        println!("mapping         {} entries", mapping.pairs.len());
+        println!("wrote           {}", out.display());
+        println!("nothing from the game is redistributed: the mapping names fields, it does not carry game text");
+        return Ok(());
+    }
+
     let out = option(args, "--out").map(PathBuf::from).unwrap_or_else(|| {
         default_mapping_path().unwrap_or_else(|| PathBuf::from("mapping.json"))
     });
-    let binary = nms_data::find_game_binary(&install.root).map_err(|error| error.to_string())?;
     let existing = nms_data::read_mapping_pairs(&out);
 
     let mapping = nms_data::write_mapping(&install.root, &out).map_err(|error| error.to_string())?;
@@ -1415,6 +1453,60 @@ fn cmd_data_mapping(args: &[String]) -> Result<(), String> {
     println!("wrote           {}", out.display());
     println!("nothing from the game is redistributed: the mapping names fields, it does not carry game text");
     Ok(())
+}
+
+/// Every JSON key used by the player saves under `dir`, recursively.
+///
+/// Used to scope a generated mapping to what real saves contain. Files are
+/// picked by name through the slot table, so `accountdata.hg`, `usersettings.hg`
+/// and the `mf_*` metadata files are left out.
+fn collect_save_keys(dir: &Path) -> Result<BTreeSet<String>, String> {
+    let mut files = Vec::new();
+    collect_save_files(dir, &mut files)?;
+    if files.is_empty() {
+        return Err(format!("no player saves under {}", dir.display()));
+    }
+    let mut keys = BTreeSet::new();
+    for path in &files {
+        let save = SaveFile::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let document = Document::parse(&save.payload).map_err(|error| format!("{}: {error}", path.display()))?;
+        collect_json_keys(document.tree(), &mut keys);
+    }
+    Ok(keys)
+}
+
+fn collect_save_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_save_files(&path, files)?;
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if Slot::from_file_name(&name).is_some_and(|slot| slot.player_number().is_some()) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(())
+}
+
+fn collect_json_keys(value: &serde_json::Value, keys: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                keys.insert(key.clone());
+                collect_json_keys(child, keys);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_json_keys(item, keys);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn cmd_data_info(args: &[String]) -> Result<(), String> {
@@ -1440,7 +1532,11 @@ fn cmd_data_info(args: &[String]) -> Result<(), String> {
     let mapping_path = mapping_output_path(args, &path);
     let mapping = nms_data::read_mapping_pairs(&mapping_path);
     if mapping.is_empty() {
-        println!("mapping         none at {} (run `nmsedit data refresh` to derive one)", mapping_path.display());
+        println!(
+            "mapping         none at {} (the built-in baseline names {} fields; `nmsedit data refresh` derives the full mapping)",
+            mapping_path.display(),
+            KeyMap::builtin().len()
+        );
     } else {
         let source = std::fs::read_to_string(&mapping_path)
             .ok()

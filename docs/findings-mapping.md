@@ -4,7 +4,10 @@ The older editor's issue tracker is mostly one problem in two shapes: *"name
 mapping not found"* after every game update, and *"why does this item show as a
 code?"*. Its mapping is a hand-maintained list, so it trails the game until
 someone rebuilds it. This note records how the mapping can instead be **derived
-from the player's own installation**, and what was measured to prove it.
+from the game itself** — the key is a hash of the name — and what was measured
+to prove it. The derivation is compiled into the editor as a baseline for the
+keys real saves use, and `nmsedit data refresh` extends it from the player's own
+installation.
 
 ## The key is a hash of the name
 
@@ -56,12 +59,12 @@ its id, which is worse than a name but better than a wrong one.
 `nmsedit data mapping` writes a mapping from the local installation, merging any
 file already at `~/.config/nmsedit/mapping.json` (the existing entries win).
 
-| | measured on a 7.x install and one 300-hour save |
+| | measured on a 7.x install and 30 real saves |
 |---|---|
-| community names reproduced by the extraction | 1,142 of 1,496 (76%) |
-| keys of the save named by the extraction alone | 714 of 926 (77%) |
-| of those, names that disagree with the community mapping | **0** |
-| community entries surviving the merge | 1,496 of 1,496 (100%) |
+| keys of the saves named by the extraction alone | 984 of 1,290 |
+| keys named by the shipped baseline (extraction plus the hand-written fallbacks) | 990 of 1,290 |
+| extraction names the community file also has, and agrees with | 1,142 of 1,143 |
+| community keys surviving the merge | 1,496 of 1,496 |
 
 The gaps are names that are not standalone identifiers in the executable. The
 clearest case is `MultiTool`, which appears only inside longer identifiers such
@@ -70,67 +73,80 @@ identifier at all. Both are entries the community file adds by hand. When the
 true name is missing, a *longer* name that shares its key can take the key —
 which is why an existing community mapping is merged in and wins, and why the
 command prints how many entries the extraction reproduced and how many differ
-(one, on the machine measured here).
+(one, on the machine measured here: `Ft;`, where the colliding
+`FfxDofLDSNearRG` is the only standalone candidate).
 
 A second extraction rule was measured as well: requiring a name to sit in an
 8-byte-padded slot (the layout of the game's per-structure field tables) covers
-more of a save's keys — 734 against 714 — but produces one name that disagrees
-with the community mapping where the stricter scan produces none. The stricter
-scan is the one implemented, and the difference is left to the community file,
+more of a save's keys — 1,034 against 984 — but produces two names that disagree
+with the community mapping, against one for the stricter scan. The stricter
+scan is the one implemented; the disagreements are left to the community file,
 which wins on merge anyway.
 
-So: the generator is a fallback that needs no third-party file, and a way to
-name fields the community file has not caught up with. It is not a replacement
-for a maintained mapping where one exists.
+So: the derivation needs no third-party file and names the bulk of what real
+saves use; a maintained mapping fills the gaps it cannot and wins on merge
+where it has a better name.
 
-## Why the mapping is generated, not shipped with the editor
+## What is built in, and what is generated
 
-The pairs are not personal to anyone — they are facts about the game — so it is
-fair to ask why they are not simply committed to this repository. Three reasons,
-in order of weight:
+There are two mappings, and the split is deliberate:
 
-1. **They are derived from Hello Games' binary.** The names are the game's own
-   field names; this project's rule is that nothing derived from the game's
-   content is committed — no text tables, no icons, and no name lists. The pack
-   of 84,965 strings is regenerated locally for the same reason, and it is 8.5 MB
-   of derived data the player builds in a tenth of a second.
-2. **The community file is a third party's artifact.** `mapping.json` ships with
-   MBINCompiler under its own licence; copying it into an MIT/Apache-2.0
-   repository would be a licence problem regardless of the first point.
-3. **A shipped list is the bug, not the fix.** Every "name mapping not found"
-   issue in the older editor's tracker is a shipped list meeting a game update.
-   A file the player regenerates is never behind the game they are running.
+* **A baseline is compiled into the editor.** `crates/nms-model/data/baseline-mapping.json`
+  holds the pairs for the keys real saves use — 984 entries, derived from the
+  1,290 distinct keys of the 30 fixture saves — so a machine with no game
+  installed still shows field names. It is this project's own derivation from
+  the executable, scoped so the file stays ~65 KB rather than ~2.5 MB, and it
+  is committed. `tools/build-baseline-mapping.sh` regenerates it after adding
+  saves or updating the game, and the fixture tests fail if the committed file
+  stops naming most of what real saves use or disagrees with an installed
+  community mapping.
+* **The full mapping is generated per installation.** `nmsedit data refresh` —
+  the one command the README asks for — reads the player's own game and writes
+  all 59,907 resolvable keys next to the text pack:
 
-What that means in practice is *not* that the user installs a file. `nmsedit data
-refresh` — the one command the README asks for after installing the editor —
-derives the text pack, the item names **and** the mapping from the local
-installation:
+  ```console
+  $ nmsedit data refresh
+  ...
+  mapping         derived from the game's executable
+  names read      76550
+  keys resolved   59907 (7985 keys dropped as ambiguous)
+  wrote           60260 entries to ~/.config/nmsedit/mapping.json
+  ```
 
-```console
-$ nmsedit data refresh
-...
-items           7957 named (5373 derived from text keys)
-wrote 84965 strings (english) to ~/.config/nmsedit/strings.json
+  Whatever is already in that file is merged in and wins, so a maintained
+  mapping is extended, never replaced.
 
-mapping         derived from the game's executable
-names read      76550
-keys resolved   59907 (7985 keys dropped as ambiguous)
-wrote           60260 entries to ~/.config/nmsedit/mapping.json
-```
+The baseline exists because the mapping is not personal data: it is a fact
+about the game, the same for every player, and "where is your game installed"
+should not decide whether a save shows `TotalPlayTime` or `Lg8`. What it must
+not become is a copy of the game: the committed part is bare field
+identifiers, no game text and no assets, and the full extraction stays on the
+machine that produced it. MBINCompiler's `mapping.json` is LGPL-3.0, so it is
+never copied into this MIT/Apache-2.0 repository; a copy the player installs is
+merged at run time.
 
-The file lives next to the pack because it is the same kind of thing: derived
-data, regenerated at will, never committed. The ~20 pairs compiled into the
-editor (`KeyMap::builtin`) stay, because a save must show its version, platform,
-save name and play time even on a machine with no game installed; everything
-beyond that is derived.
+The split also answers the update problem directly. A shipped *list* is what
+made the older editor trail every game update; a shipped *baseline* plus a
+per-install refresh means fields a new update adds are one command away, and
+the baseline only has to be as current as the saves it was built from.
+
+### Localization
+
+None of this is localized, by construction: the mapping's right side is a
+**code identifier** (`TotalPlayTime`, `KnownSpecials`), not display text. The
+game stores the same identifier under the same key in every language, so one
+mapping serves all of them. What *is* localized is the game text and the item
+names, and that is the other half of `data refresh`: `nmsedit data refresh
+--language german` builds the text pack for that language, and the mapping is
+refreshed alongside it without changing.
 
 ## Reproducing it
 
 ```sh
-nmsedit data mapping --out /tmp/mapping.json          # no merge, pure extraction
+nmsedit data mapping --out /tmp/mapping.json          # pure extraction, no merge
 nmsedit data mapping                                  # merge over the installed file
-nmsedit data mapping --out /tmp/m.json --install /path/to/No\ Man\'s\ Sky
+tools/build-baseline-mapping.sh                       # the shipped baseline
 ```
 
-Nothing from the game is written into the repository: the mapping names fields,
-it does not carry game text.
+Nothing from the game is written into the repository except the baseline, which
+names fields and carries no game text.

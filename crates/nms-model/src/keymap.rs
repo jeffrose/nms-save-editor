@@ -1,9 +1,13 @@
 //! Mapping between on-disk object keys and readable game field names.
 //!
 //! No Man's Sky stores its save JSON with obfuscated keys: the save version
-//! lives under `"F2P"`, the platform under `"8>q"`, and so on. Two different
-//! key spellings are in the wild, and the community maintains a mapping file
-//! (distributed with MBINCompiler releases) that lists each pair.
+//! lives under `"F2P"`, the platform under `"8>q"`, and so on. The key is a
+//! hash of the name, so the pairs can be derived from the game's executable —
+//! and the ones real saves use are committed with this crate
+//! (`data/baseline-mapping.json`), which is what [`KeyMap::builtin`] loads. A
+//! community mapping file (distributed with MBINCompiler releases) is merged
+//! on top when one is installed, and `nmsedit data refresh` regenerates the
+//! full list from the player's own game.
 //!
 //! Design rule for this project: **the on-disk keys are the source of truth.**
 //! Documents keep whatever key text the file used, and mapping is applied only
@@ -12,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// A bidirectional key map.
 #[derive(Debug, Clone, Default)]
@@ -22,46 +27,70 @@ pub struct KeyMap {
     readable_to_obfuscated: HashMap<String, String>,
 }
 
+/// Root fields, written by hand.
+///
+/// The generated baseline covers what the derivation can resolve; these cover
+/// what it cannot. `Version` (`F2P`), `ExpeditionContext` (`2YS`),
+/// `UsesThirdPersonCharacterCam` (`kPF`), `UsesThirdPersonShipCam` (`Wh<`),
+/// `Preset` (`brJ`) and `EasiestUsedPreset` (`qAf`) all collide with another
+/// identifier in the executable, so the derivation drops them — but a save
+/// must still show its version and summary fields on a machine with no game
+/// installed. These stand alone if the embedded baseline is ever unreadable.
+const HAND_WRITTEN_PAIRS: &[(&str, &str)] = &[
+    // Root fields.
+    ("F2P", "Version"),
+    ("8>q", "Platform"),
+    ("XTp", "ActiveContext"),
+    ("<h0", "CommonStateData"),
+    ("vLc", "BaseContext"),
+    ("2YS", "ExpeditionContext"),
+    ("fDu", "DiscoveryManagerData"),
+    // Common state.
+    ("Pk4", "SaveName"),
+    ("Lg8", "TotalPlayTime"),
+    ("kPF", "UsesThirdPersonCharacterCam"),
+    ("wb:", "UsesThirdPersonVehicleCam"),
+    ("Wh<", "UsesThirdPersonShipCam"),
+    // Player state, reached through a context (BaseContext or ExpeditionContext).
+    ("6f=", "PlayerStateData"),
+    ("rnc", "SpawnStateData"),
+    ("n:R", "SaveSummary"),
+    ("LyC", "DifficultyState"),
+    ("brJ", "Preset"),
+    ("qAf", "EasiestUsedPreset"),
+    ("4I:", "HardestUsedPreset"),
+    ("7ND", "DifficultyPresetType"),
+];
+
+/// The generated baseline, parsed once on first use.
+///
+/// The file is written by `tools/build-baseline-mapping.sh` from the game's own
+/// field-name tables, scoped to the keys real saves use. It is a build-time
+/// input, so a parse failure can only mean a broken build — degrade to the
+/// hand-written pairs rather than panic in a user's session.
+fn baseline() -> &'static KeyMap {
+    static BASELINE: OnceLock<KeyMap> = OnceLock::new();
+    BASELINE.get_or_init(|| KeyMap::from_json(include_str!("../data/baseline-mapping.json")).unwrap_or_default())
+}
+
 impl KeyMap {
     /// An empty map (only exact key matches will resolve).
     pub fn empty() -> KeyMap {
         KeyMap::default()
     }
 
-    /// The small set of keys this crate needs for save summaries.
+    /// The mapping compiled into the editor.
     ///
-    /// This is deliberately tiny: the full ~1300-entry mapping is game data
-    /// that belongs in a generated data pack (see the data pipeline milestone),
-    /// not hand-copied into source.
+    /// The committed baseline names the fields real saves use, so a machine
+    /// with no game installed still shows names; the game installation only
+    /// matters for *refreshing* the mapping, never for reading one. The
+    /// hand-written pairs fill the gaps the derivation cannot resolve.
     pub fn builtin() -> KeyMap {
-        const PAIRS: &[(&str, &str)] = &[
-            // Root fields.
-            ("F2P", "Version"),
-            ("8>q", "Platform"),
-            ("XTp", "ActiveContext"),
-            ("<h0", "CommonStateData"),
-            ("vLc", "BaseContext"),
-            ("2YS", "ExpeditionContext"),
-            ("fDu", "DiscoveryManagerData"),
-            // Common state.
-            ("Pk4", "SaveName"),
-            ("Lg8", "TotalPlayTime"),
-            ("kPF", "UsesThirdPersonCharacterCam"),
-            ("wb:", "UsesThirdPersonVehicleCam"),
-            ("Wh<", "UsesThirdPersonShipCam"),
-            // Player state, reached through a context (BaseContext or ExpeditionContext).
-            ("6f=", "PlayerStateData"),
-            ("rnc", "SpawnStateData"),
-            ("n:R", "SaveSummary"),
-            ("LyC", "DifficultyState"),
-            ("brJ", "Preset"),
-            ("qAf", "EasiestUsedPreset"),
-            ("4I:", "HardestUsedPreset"),
-            ("7ND", "DifficultyPresetType"),
-        ];
-        let mut map = KeyMap::default();
-        for (obfuscated, readable) in PAIRS {
-            map.insert(obfuscated, readable);
+        let mut map = baseline().clone();
+        for (obfuscated, readable) in HAND_WRITTEN_PAIRS {
+            if map.readable_for(obfuscated).is_none() {
+                map.insert(obfuscated, readable);
+            }
         }
         map
     }
@@ -146,6 +175,27 @@ mod tests {
         assert_eq!(map.readable_for("Lg8"), Some("TotalPlayTime"));
         let candidates: Vec<_> = map.candidates("Version").collect();
         assert_eq!(candidates, vec!["Version", "F2P"]);
+    }
+
+    /// The committed baseline is what makes `builtin()` useful with no game
+    /// installed; if it stops loading, users silently lose field names.
+    #[test]
+    fn the_embedded_baseline_is_loaded() {
+        let map = KeyMap::builtin();
+        assert!(map.len() >= 900, "the embedded baseline did not load: {} entries", map.len());
+        assert_eq!(map.readable_for("Pk4"), Some("SaveName"), "a key the derivation resolves");
+        assert_eq!(map.readable_for("F2P"), Some("Version"), "a key only the hand-written pairs resolve");
+    }
+
+    #[test]
+    fn the_hand_written_pairs_agree_with_the_baseline() {
+        let baseline = KeyMap::from_json(include_str!("../data/baseline-mapping.json"))
+            .expect("the committed baseline must parse");
+        for (key, name) in HAND_WRITTEN_PAIRS {
+            if let Some(generated) = baseline.readable_for(key) {
+                assert_eq!(generated, *name, "the hand-written pair {key} disagrees with the baseline");
+            }
+        }
     }
 
     #[test]
