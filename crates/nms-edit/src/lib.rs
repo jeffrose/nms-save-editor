@@ -31,7 +31,7 @@ pub use backup::{
 pub use bundle::{ChangeSummary, CommitOptions, CommitReport, MetadataPlan, SaveBundle, WritePlan, now_unix};
 pub use player::{
     Cell, Currencies, Currency, Inventory, InventoryPath, InventoryRole, ItemKind, ItemSlot, KnownList, NewItem,
-    PlayerError, StackSize, StackSizeSource, normalize_id,
+    PlayerError, StackSize, StackSizeSource, SuitStat, SuitStats, normalize_id,
 };
 pub use safety::{LiveLocation, SANDBOX_MARKER, is_sandboxed, live_notice, live_save_location, mark_sandbox};
 

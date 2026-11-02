@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use nms_edit::{
     BackupEntry, Cell, CommitOptions, Currency, Inventory, ItemKind, ItemSlot, KnownList, NewItem, SaveBundle,
-    now_unix,
+    SuitStat, now_unix,
 };
 use nms_format::metadata::{Metadata, MetadataPatch, Slot};
 use nms_format::SaveFile;
@@ -47,6 +47,9 @@ derives one from your own game; --mapping overrides it):
     nmsedit currency <save.hg> <name> <value>
                                            set one balance (units, nanites or
                                            quicksilver) and commit
+    nmsedit suit <save.hg>                 show the exosuit's health, shield
+                                           and energy
+    nmsedit suit <save.hg> <stat> <value>  set one of them and commit
     nmsedit inventories <save.hg> [--all]  list inventories and their grids
     nmsedit inventory <save.hg> <name>     list one inventory's slots
     nmsedit add-item <save.hg> <inv> <id> <amount>
@@ -154,6 +157,7 @@ fn main() -> ExitCode {
         Some("mapping") => run(&args, cmd_mapping),
         Some("currencies") => run(&args, cmd_currencies),
         Some("currency") => run(&args, cmd_currency),
+        Some("suit") => run(&args, cmd_suit),
         Some("inventories") => run(&args, cmd_inventories),
         Some("inventory") => run(&args, cmd_inventory),
         Some("add-item") => run(&args, cmd_add_item),
@@ -499,6 +503,37 @@ fn cmd_currencies(args: &[String]) -> Result<(), String> {
         println!("{:<12} {:>10}{note}", currency.label(), value);
     }
     Ok(())
+}
+
+/// Show or set the exosuit's stats (health, shield, energy).
+fn cmd_suit(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let Some(name) = positional.get(1) else {
+        let bundle = load_bundle(args, path)?;
+        let stats = bundle.suit_stats().map_err(|e| e.to_string())?;
+        for stat in SuitStat::ALL {
+            let value = stats.get(stat);
+            let note =
+                if value == SuitStat::MAX { "  (the largest value the game can read)" } else { "" };
+            println!("{:<10} {:>12}{note}", stat.label(), value);
+        }
+        return Ok(());
+    };
+    let value = positional.get(2).ok_or_else(|| format!("missing value\n\n{USAGE}"))?;
+    let stat = SuitStat::parse(name)
+        .ok_or_else(|| format!("unknown suit stat {name:?} (use health, shield or energy)"))?;
+    let value = parse_u32(value, "the stat")?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let before = bundle.suit_stats().map_err(|e| e.to_string())?.get(stat);
+    if !bundle.set_suit_stat(stat, value).map_err(|e| e.to_string())? {
+        println!("{} already holds {value}, nothing to do", stat.label());
+        return Ok(());
+    }
+    println!("{}: {} -> {value}", stat.label(), before);
+    commit_and_report(args, &mut bundle, &data_path)
 }
 
 fn cmd_currency(args: &[String]) -> Result<(), String> {

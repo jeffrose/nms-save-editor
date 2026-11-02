@@ -15,7 +15,7 @@ use std::time::SystemTime;
 use nms_data::DataPack;
 use nms_edit::{
     live_save_location, now_unix, BackupStore, Cell, CommitOptions, Currencies, Currency, Inventory, ItemKind,
-    KnownList, LiveLocation, NewItem, SaveBundle,
+    KnownList, LiveLocation, NewItem, SaveBundle, SuitStat, SuitStats,
 };
 use nms_format::metadata::Slot;
 use nms_model::{describe_raw_path, KeyMap, RawStep};
@@ -185,6 +185,10 @@ pub struct OpenSave {
     pub currencies: Option<Currencies>,
     /// Why the balances could not be read.
     pub currencies_error: Option<String>,
+    /// Exosuit stats, when the save has a player state.
+    pub suit_stats: Option<SuitStats>,
+    /// Why the exosuit stats could not be read.
+    pub suit_stats_error: Option<String>,
     /// Every inventory the player state carries, in file order.
     pub inventories: Vec<Inventory>,
     /// The known-item lists the player state carries, with their ids.
@@ -210,6 +214,10 @@ impl OpenSave {
         self.info = self.bundle.info();
         (self.currencies, self.currencies_error) = match self.bundle.currencies() {
             Ok(currencies) => (Some(currencies), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        (self.suit_stats, self.suit_stats_error) = match self.bundle.suit_stats() {
+            Ok(stats) => (Some(stats), None),
             Err(error) => (None, Some(error.to_string())),
         };
         self.inventories = self.bundle.inventories();
@@ -365,6 +373,8 @@ impl Session {
                     bundle,
                     currencies,
                     currencies_error,
+                    suit_stats: None,
+                    suit_stats_error: None,
                     inventories: Vec::new(),
                     known,
                 })
@@ -402,6 +412,18 @@ impl Session {
         open.bundle.set_currency(currency, value).map_err(|error| error.to_string())?;
         open.refresh();
         Ok(format!("{}: {before} -> {value}", currency.label()))
+    }
+
+    /// Stage a change to one exosuit stat. Nothing is written until [`Session::save`].
+    pub fn set_suit_stat(&mut self, stat: SuitStat, value: u32) -> Result<String, String> {
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let before = open.bundle.suit_stats().map_err(|error| error.to_string())?.get(stat);
+        if before == value {
+            return Ok(format!("{} is already {value}", stat.label()));
+        }
+        open.bundle.set_suit_stat(stat, value).map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(format!("{}: {before} -> {value}", stat.label()))
     }
 
     /// Stage a new item in the inventory at `inventory`.

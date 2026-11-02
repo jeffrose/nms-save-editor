@@ -67,6 +67,8 @@ storage slot    2 (PlayerState1)
 | `nmsedit data mapping` | derive the save-key mapping from the game's own executable (field names live in `NMS.exe`; the key is a hash of the name), merging the installed file; `--saves <dir>` scopes it to those saves and builds the shipped baseline |
 | `nmsedit currencies <save.hg>` | show units, nanites and quicksilver |
 | `nmsedit currency <save.hg> <name> <value>` | set one balance and commit |
+| `nmsedit suit <save.hg>` | show the exosuit's health, shield and energy |
+| `nmsedit suit <save.hg> <stat> <value>` | set one of them and commit |
 | `nmsedit inventories <save.hg> [--all]` | list inventories, their grids and roles |
 | `nmsedit inventory <save.hg> <name>` | list one inventory's slots, with item names |
 | `nmsedit add-item <save.hg> <inv> <id> <amount>` | add items, filling stacks first (`--kind`, `--max`, `--cell`) |
@@ -139,7 +141,18 @@ names from the data pack — the game's own text, regenerated locally — and
 per-slot details on click. Ids the text tables do not name (some legacy
 objects) show the id instead; the editor never invents a name.
 
-Editing follows a staging model: balances, slot amounts, repairs, and
+The window is organised in groups — **Player** (Overview, Suit, Inventories),
+**Data** (Known items) and **Advanced** (JSON) — so the strip stays short while
+the original editor's names stay recognisable. More pages from that editor
+(Ships, Multitool, Freighter, Frigates, Bases, Settlements, Milestones,
+Account) are planned in [`docs/plan-gui-parity.md`](docs/plan-gui-parity.md).
+
+The **Suit** page edits the exosuit's three stats — health, shield and energy —
+which are plain fields in the player state; the game reads them as signed
+32-bit values, so the window refuses anything larger than 2147483647. The
+overview's balances work the same way, capped at the game's own 4294967295.
+
+Editing follows a staging model: balances, suit stats, slot amounts, repairs, and
 add/remove/move item actions change only the in-memory document, and a
 **Save** button writes them through the same edit layer the CLI uses — a
 timestamped zip backup first, then the data file, then patched metadata. A

@@ -42,6 +42,23 @@ The editor therefore exposes `u32` to callers and converts on the boundary:
 Writing `4294967295` literally would be a different number to the game, which
 is why the conversion is centralised instead of left to callers.
 
+## Exosuit stats
+
+The three stats the original editor's Exosuit tab edits are plain fields in
+`PlayerStateData`:
+
+| Field | Meaning | Observed values |
+|---|---|---|
+| `Health` | current health | 180 (a save mid-play), 60 (an expedition start) |
+| `Shield` | shield charge | 100 |
+| `Energy` | life-support charge | 76, 43 |
+
+Unlike the currencies, these are **not** a two's-complement `u32`: they are
+written as ordinary positive integers, and the game reads them as signed
+32-bit, so the editor refuses anything above `2147483647` rather than writing a
+value the game would read as negative. A malformed value in a save reads as its
+nearest legal one instead of failing the whole page.
+
 ## Inventory containers
 
 An inventory is any object that has all four of:

@@ -47,6 +47,13 @@ pub fn definitions() -> Vec<Value> {
             &["save"],
         ),
         tool(
+            "read_suit_stats",
+            "The exosuit's three stats: health, shield and energy. They are plain fields, not \
+             items; to change one, use set_suit_stat.",
+            json!({ "save": save_prop() }),
+            &["save"],
+        ),
+        tool(
             "list_inventories",
             "Every inventory in the save: name, grid size, how many slots are used, and whether it \
              is player-facing or machine-owned (refiner buffers and repair grids). Use the name \
@@ -115,6 +122,18 @@ pub fn definitions() -> Vec<Value> {
                 "value": integer_prop("The number the game shows, 0 to 4294967295"),
             }),
             &["save", "currency", "value"],
+        ),
+        tool(
+            "set_suit_stat",
+            "Set one exosuit stat and commit. A timestamped backup is written first, and a save \
+             whose value did not change is not rewritten. The game reads these as signed 32-bit \
+             values, so the largest accepted value is 2147483647.",
+            json!({
+                "save": save_prop(),
+                "stat": enum_prop("Which stat", &["health", "shield", "energy"]),
+                "value": integer_prop("The new value, 0 to 2147483647"),
+            }),
+            &["save", "stat", "value"],
         ),
         tool(
             "add_item",
@@ -234,6 +253,7 @@ pub fn call(server: &Server, name: &str, args: &Args) -> Option<Result<String, S
         "list_slots" => list_slots(args),
         "save_info" => save_info(server, args),
         "read_currencies" => read_currencies(server, args),
+        "read_suit_stats" => read_suit_stats(server, args),
         "list_inventories" => list_inventories(server, args),
         "read_inventory" => read_inventory(server, args),
         "search_items" => search_items(server, args),
@@ -241,6 +261,7 @@ pub fn call(server: &Server, name: &str, args: &Args) -> Option<Result<String, S
         "list_backups" => list_backups(args),
         "get_field" => get_field(server, args),
         "set_currency" => set_currency(server, args),
+        "set_suit_stat" => set_suit_stat(server, args),
         "add_item" => add_item(server, args),
         "set_item_amount" => set_item_amount(server, args),
         "remove_item" => remove_item(server, args),
@@ -540,6 +561,18 @@ fn read_currencies(server: &Server, args: &Args) -> Result<String, String> {
     })))
 }
 
+fn read_suit_stats(server: &Server, args: &Args) -> Result<String, String> {
+    ensure_mapping(server)?;
+    let bundle = load(server, &arg_str(args, "save")?)?;
+    let stats = bundle.suit_stats().map_err(|error| error.to_string())?;
+    Ok(json_text(json!({
+        "health": stats.health,
+        "shield": stats.shield,
+        "energy": stats.energy,
+        "max": nms_edit::SuitStat::MAX,
+    })))
+}
+
 fn list_inventories(server: &Server, args: &Args) -> Result<String, String> {
     ensure_mapping(server)?;
     let bundle = load(server, &arg_str(args, "save")?)?;
@@ -737,6 +770,20 @@ fn set_currency(server: &Server, args: &Args) -> Result<String, String> {
         let before = bundle.currencies().map_err(|error| error.to_string())?.get(currency);
         bundle.set_currency(currency, value).map_err(|error| error.to_string())?;
         Ok(format!("{}: {before} -> {value}", currency.label()))
+    })
+}
+
+fn set_suit_stat(server: &Server, args: &Args) -> Result<String, String> {
+    ensure_mapping(server)?;
+    let save = arg_str(args, "save")?;
+    let name = arg_str(args, "stat")?;
+    let stat = nms_edit::SuitStat::parse(&name)
+        .ok_or_else(|| format!("unknown suit stat {name:?}; one of: health, shield, energy"))?;
+    let value = arg_u32(args, "value")?;
+    edit_and_commit(server, &save, |bundle| {
+        let before = bundle.suit_stats().map_err(|error| error.to_string())?.get(stat);
+        bundle.set_suit_stat(stat, value).map_err(|error| error.to_string())?;
+        Ok(format!("{}: {before} -> {value}", stat.label()))
     })
 }
 
@@ -948,6 +995,9 @@ mod tests {
                 "Units": 1200,
                 "Nanites": 40,
                 "Specials": 7,
+                "Health": 180,
+                "Shield": 100,
+                "Energy": 76,
                 "Inventory": {
                     "Slots": [
                         {"Type":{"InventoryType":"Substance"},"Id":"^CARBON","Amount":10,"MaxAmount":20,"DamageFactor":0.0,"FullyInstalled":true,"AddedAutomatically":false,"Index":{"X":0,"Y":0}}
@@ -1041,6 +1091,39 @@ mod tests {
             json!({ "save": save, "currency": "nanites", "value": 100040 }),
         );
         assert!(again.contains("nothing changed"), "{again}");
+    }
+
+    #[test]
+    fn a_set_suit_stat_call_reads_edits_and_reports() {
+        let scratch = Scratch::new("suit");
+        let save = scratch.write("save.hg", SAVE);
+        let server = mapped_server(scratch.path());
+        let save = save.display().to_string();
+
+        let read = call_ok(&server, "read_suit_stats", json!({ "save": save }));
+        assert!(read.contains("\"health\":180"), "{read}");
+        assert!(read.contains("\"energy\":76"), "{read}");
+        assert!(read.contains("\"max\":2147483647"), "{read}");
+
+        let report = call_ok(
+            &server,
+            "set_suit_stat",
+            json!({ "save": save, "stat": "health", "value": 999 }),
+        );
+        assert!(report.contains("health: 180 -> 999"), "{report}");
+        assert!(report.contains("backup:"), "{report}");
+
+        let read = call_ok(&server, "read_suit_stats", json!({ "save": save }));
+        assert!(read.contains("\"health\":999"), "{read}");
+
+        // A value the game's signed 32-bit field cannot hold is refused, and
+        // nothing is written.
+        let error = call_err(
+            &server,
+            "set_suit_stat",
+            json!({ "save": save, "stat": "shield", "value": 3_000_000_000u64 }),
+        );
+        assert!(error.contains("between 0 and 2147483647"), "{error}");
     }
 
     #[test]

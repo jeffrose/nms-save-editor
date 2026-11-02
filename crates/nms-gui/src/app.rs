@@ -18,7 +18,7 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, RichText, ScrollArea, Sense, Stroke, StrokeKind, Vec2,
 };
 use nms_data::DataPack;
-use nms_edit::{Cell, Currency, Inventory, InventoryRole, ItemKind, ItemSlot, KnownList};
+use nms_edit::{Cell, Currency, Inventory, InventoryRole, ItemKind, ItemSlot, KnownList, SuitStat};
 use nms_model::{describe_raw_path, KeyMap, RawStep};
 use serde_json::Value;
 
@@ -26,13 +26,67 @@ use crate::session::{
     contains_ci, format_duration, json_summary, BackupSummary, JsonHit, OpenSave, Session, JSON_HIT_LIMIT,
 };
 
+/// The navigation groups.
+///
+/// The original editor's tabs are grouped rather than flattened, so the strip
+/// stays short while its names stay recognisable. `Universe` (Bases &
+/// Settlements) joins when those pages land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Group {
+    Player,
+    Data,
+    Advanced,
+}
+
+impl Group {
+    const ALL: [Group; 3] = [Group::Player, Group::Data, Group::Advanced];
+
+    fn label(self) -> &'static str {
+        match self {
+            Group::Player => "Player",
+            Group::Data => "Data",
+            Group::Advanced => "Advanced",
+        }
+    }
+
+    /// The pages of this group, in display order.
+    fn pages(self) -> &'static [Tab] {
+        match self {
+            Group::Player => &[Tab::Overview, Tab::Suit, Tab::Inventories],
+            Group::Data => &[Tab::Known],
+            Group::Advanced => &[Tab::Json],
+        }
+    }
+}
+
 /// Which part of a save the central panel is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Overview,
+    Suit,
     Inventories,
     Known,
     Json,
+}
+
+impl Tab {
+    fn label(self) -> &'static str {
+        match self {
+            Tab::Overview => "Overview",
+            Tab::Suit => "Suit",
+            Tab::Inventories => "Inventories",
+            Tab::Known => "Known items",
+            Tab::Json => "JSON",
+        }
+    }
+
+    fn group(self) -> Group {
+        match self {
+            Tab::Overview | Tab::Suit | Tab::Inventories => Group::Player,
+            Tab::Known => Group::Data,
+            Tab::Json => Group::Advanced,
+        }
+    }
 }
 
 /// The item kind a new stack should be written as.
@@ -74,6 +128,8 @@ struct EditState {
     selected_slot: Option<usize>,
     /// One text box per [`Currency::ALL`] entry, so a balance can be typed.
     currency_inputs: [String; 3],
+    /// One text box per [`SuitStat::ALL`] entry.
+    stat_inputs: [String; 3],
     amount_input: String,
     add_id: String,
     add_amount: String,
@@ -89,6 +145,7 @@ impl Default for EditState {
             selected_inventory: 0,
             selected_slot: None,
             currency_inputs: Default::default(),
+            stat_inputs: Default::default(),
             amount_input: String::new(),
             add_id: String::new(),
             add_amount: String::new(),
@@ -108,6 +165,11 @@ impl EditState {
         if let Some(currencies) = open.currencies {
             for (index, currency) in Currency::ALL.iter().enumerate() {
                 self.currency_inputs[index] = currencies.get(*currency).to_string();
+            }
+        }
+        if let Some(stats) = open.suit_stats {
+            for (index, stat) in SuitStat::ALL.iter().enumerate() {
+                self.stat_inputs[index] = stats.get(*stat).to_string();
             }
         }
         let still_there = self.selected_slot.is_some_and(|position| {
@@ -188,6 +250,7 @@ impl KnownState {
 /// window never holds a borrow of the save while changing it.
 enum Action {
     SetCurrency(Currency, u32),
+    SetSuitStat(SuitStat, u32),
     AddItem {
         inventory: usize,
         id: String,
@@ -635,6 +698,7 @@ impl EditorApp {
     fn apply(&mut self, action: Action) {
         let result = match action {
             Action::SetCurrency(currency, value) => self.session.set_currency(currency, value),
+            Action::SetSuitStat(stat, value) => self.session.set_suit_stat(stat, value),
             Action::AddItem { inventory, id, amount, kind, max } => {
                 self.session.add_item(inventory, &id, amount, kind, max)
             }
@@ -867,18 +931,25 @@ impl EditorApp {
                 return;
             }
 
+            // Two levels: the group of pages, then the pages themselves. The
+            // groups follow the original editor's sections so its users can
+            // find things; pages land as their phases land.
             ui.horizontal(|ui| {
-                if ui.selectable_label(self.tab == Tab::Overview, "Overview").clicked() {
-                    self.tab = Tab::Overview;
+                for group in Group::ALL {
+                    let active = self.tab.group() == group;
+                    if ui.selectable_label(active, group.label()).clicked() && !active {
+                        if let Some(first) = group.pages().first() {
+                            self.tab = *first;
+                        }
+                    }
                 }
-                if ui.selectable_label(self.tab == Tab::Inventories, "Inventories").clicked() {
-                    self.tab = Tab::Inventories;
-                }
-                if ui.selectable_label(self.tab == Tab::Known, "Known items").clicked() {
-                    self.tab = Tab::Known;
-                }
-                if ui.selectable_label(self.tab == Tab::Json, "JSON").clicked() {
-                    self.tab = Tab::Json;
+            });
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                for page in self.tab.group().pages() {
+                    if ui.selectable_label(self.tab == *page, page.label()).clicked() {
+                        self.tab = *page;
+                    }
                 }
             });
             ui.separator();
@@ -896,6 +967,7 @@ impl EditorApp {
                     &self.backups,
                     self.backups_note.as_deref(),
                 ),
+                Tab::Suit => suit_tab(ui, open, &mut self.edit, editable),
                 Tab::Inventories => inventories_tab(
                     ui,
                     open,
@@ -1273,6 +1345,62 @@ fn live_banner(ui: &mut egui::Ui) {
         .color(Color32::from_rgb(200, 140, 90)),
     );
     ui.add_space(4.0);
+}
+
+/// The exosuit page: its three stats, the fields the original's Exosuit tab
+/// exposes. The suit's grids stay in the shared inventory view for now; the
+/// entity work of G1 will bring them here.
+fn suit_tab(ui: &mut egui::Ui, open: &OpenSave, edit: &mut EditState, editable: bool) -> Option<Action> {
+    let mut action = None;
+    ui.add_space(6.0);
+    ui.heading("Suit");
+    ui.label(RichText::new("The exosuit's own stats. Upgrades in the suit's grids add to these.").weak());
+    ui.add_space(10.0);
+
+    match &open.suit_stats {
+        Some(stats) => {
+            ui.label(RichText::new("STATS").small().strong());
+            ui.add_space(4.0);
+            egui::Grid::new("suit-stats").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
+                for (index, stat) in SuitStat::ALL.iter().enumerate() {
+                    let current = stats.get(*stat);
+                    ui.label(stat.label());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(thousands(current)).strong());
+                        if editable {
+                            ui.add_space(8.0);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut edit.stat_inputs[index])
+                                    .desired_width(110.0),
+                            );
+                            let parsed =
+                                parse_u32(&edit.stat_inputs[index]).filter(|value| *value <= SuitStat::MAX);
+                            if ui.add_enabled(parsed.is_some(), egui::Button::new("Set")).clicked() {
+                                if let Some(value) = parsed {
+                                    action = Some(Action::SetSuitStat(*stat, value));
+                                }
+                            }
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!(
+                    "the game reads these as signed 32-bit values, so {} is the largest it can hold",
+                    SuitStat::MAX
+                ))
+                .small()
+                .weak(),
+            );
+        }
+        None => {
+            let message = open.suit_stats_error.as_deref().unwrap_or("no player state in this save");
+            ui.label(RichText::new(message).weak());
+        }
+    }
+    action
 }
 
 fn overview(
@@ -2291,6 +2419,9 @@ mod tests {
                 "Units": 1200,
                 "Nanites": 40,
                 "Specials": 7,
+                "Health": 180,
+                "Shield": 100,
+                "Energy": 76,
                 "Inventory": {
                     "Slots": [
                         {"Type":{"InventoryType":"Substance"},"Id":"^CARBON","Amount":10,"MaxAmount":20,"DamageFactor":0.0,"FullyInstalled":true,"AddedAutomatically":false,"Index":{"X":0,"Y":0}}
@@ -2480,6 +2611,27 @@ mod tests {
         for expected in ["INVENTORIES", "Inventory", "CARBON", "Add item", "Repair all"] {
             assert!(text.contains(expected), "the inventory tab should draw {expected:?}:\n{text}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_suit_page_shows_and_stages_its_stats() {
+        let dir = scratch("suit");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Suit;
+
+        let text = drawn_text(&mut app);
+        for expected in ["Player", "Data", "Advanced", "Suit", "STATS", "health", "shield", "energy"] {
+            assert!(text.contains(expected), "the suit page should draw {expected:?}:\n{text}");
+        }
+
+        // The Set button goes through the same action path.
+        app.apply(Action::SetSuitStat(SuitStat::Health, 333));
+        let open = app.session.open.as_ref().expect("open");
+        assert_eq!(open.suit_stats.expect("stats").health, 333);
+        assert!(app.session.dirty(), "a staged stat must mark the save dirty");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

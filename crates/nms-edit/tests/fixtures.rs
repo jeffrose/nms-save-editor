@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nms_edit::{CommitOptions, SaveBundle, format_timestamp};
+use nms_edit::{CommitOptions, SaveBundle, SuitStat, format_timestamp};
 use nms_format::metadata::{Metadata, Slot};
 use nms_model::{Document, KeyMap};
 use serde_json::Value;
@@ -378,6 +378,29 @@ fn raw_slot_count(value: &Value, keys: &KeyMap) -> usize {    fn member<'a>(valu
         Value::Array(items) => items.iter().map(|child| raw_slot_count(child, keys)).sum(),
         _ => 0,
     }
+}
+
+/// The exosuit stats read from every real player save, inside the range the
+/// editor allows.
+#[test]
+fn suit_stats_read_from_real_saves() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures (run tools/fetch-fixtures.sh)");
+        return;
+    };
+    let mut checked = 0usize;
+    for slot in player_slots(&dir) {
+        let bundle = SaveBundle::load(&dir.join(slot.data_file_name()), KeyMap::builtin())
+            .unwrap_or_else(|e| panic!("{slot}: {e}"));
+        let stats = bundle.suit_stats().unwrap_or_else(|e| panic!("{slot}: {e}"));
+        for stat in SuitStat::ALL {
+            let value = stats.get(stat);
+            assert!(value > 0, "{slot}: {} reads as zero", stat.label());
+            assert!(value <= SuitStat::MAX, "{slot}: {} is {}", stat.label(), value);
+        }
+        checked += 1;
+    }
+    eprintln!("read suit stats from {checked} saves");
 }
 
 #[test]

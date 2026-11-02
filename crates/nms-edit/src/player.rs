@@ -120,6 +120,95 @@ fn decode_currency(value: i64) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// exosuit stats
+// ---------------------------------------------------------------------------
+
+/// One of the exosuit's three editable stats.
+///
+/// The original editor exposes the same three, and they are plain integers in
+/// `PlayerStateData` — the game's own upgrade system adds to them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuitStat {
+    /// Health.
+    Health,
+    /// Shield.
+    Shield,
+    /// Energy (life support charge).
+    Energy,
+}
+
+impl SuitStat {
+    /// All three, in display order.
+    pub const ALL: [SuitStat; 3] = [SuitStat::Health, SuitStat::Shield, SuitStat::Energy];
+
+    /// The on-disk field name.
+    pub fn field(self) -> &'static str {
+        match self {
+            SuitStat::Health => "Health",
+            SuitStat::Shield => "Shield",
+            SuitStat::Energy => "Energy",
+        }
+    }
+
+    /// A lowercase name for command lines and reports.
+    pub fn label(self) -> &'static str {
+        match self {
+            SuitStat::Health => "health",
+            SuitStat::Shield => "shield",
+            SuitStat::Energy => "energy",
+        }
+    }
+
+    /// Parse a lowercase name.
+    pub fn parse(text: &str) -> Option<SuitStat> {
+        match text.to_ascii_lowercase().as_str() {
+            "health" | "hp" => Some(SuitStat::Health),
+            "shield" => Some(SuitStat::Shield),
+            "energy" => Some(SuitStat::Energy),
+            _ => None,
+        }
+    }
+
+    /// The largest value the game can read from this field.
+    ///
+    /// The game stores these in a signed 32-bit integer; a larger value would
+    /// read back negative, so the editor refuses it rather than writing a save
+    /// the game would misread.
+    pub const MAX: u32 = i32::MAX as u32;
+}
+
+/// The exosuit's three editable stats.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SuitStats {
+    /// Health.
+    pub health: u32,
+    /// Shield.
+    pub shield: u32,
+    /// Energy.
+    pub energy: u32,
+}
+
+impl SuitStats {
+    /// Read one stat.
+    pub fn get(&self, stat: SuitStat) -> u32 {
+        match stat {
+            SuitStat::Health => self.health,
+            SuitStat::Shield => self.shield,
+            SuitStat::Energy => self.energy,
+        }
+    }
+
+    /// Set one stat.
+    pub fn set(&mut self, stat: SuitStat, value: u32) {
+        match stat {
+            SuitStat::Health => self.health = value,
+            SuitStat::Shield => self.shield = value,
+            SuitStat::Energy => self.energy = value,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // inventories
 // ---------------------------------------------------------------------------
 
@@ -346,6 +435,19 @@ pub enum PlayerError {
     /// The save has no player state (for example an account-level file).
     #[error("this save has no player state")]
     NoPlayerState,
+
+    /// A value the field cannot hold (the game stores it in a narrower type).
+    #[error("{field} must be between {min} and {max}, got {value}")]
+    OutOfRange {
+        /// Field name.
+        field: &'static str,
+        /// Smallest value the game can read.
+        min: i64,
+        /// Largest value the game can read.
+        max: i64,
+        /// The refused value.
+        value: i64,
+    },
 
     /// The requested inventory does not exist.
     #[error("no inventory named {0:?} (run `nmsedit inventories` to list them)")]
@@ -686,6 +788,45 @@ impl SaveBundle {
             return Ok(false);
         }
         self.set(&path, Value::from(encode_currency(value)))?;
+        Ok(true)
+    }
+
+    /// The exosuit's three editable stats.
+    pub fn suit_stats(&self) -> Result<SuitStats, PlayerError> {
+        let mut stats = SuitStats::default();
+        for stat in SuitStat::ALL {
+            let value = self
+                .player_state_value(stat.field())
+                .and_then(Value::as_i64)
+                .ok_or(PlayerError::NoPlayerState)?;
+            // A malformed value reads as its nearest legal one; the setter
+            // refuses anything the game could not read back.
+            stats.set(stat, value.clamp(0, i64::from(SuitStat::MAX)) as u32);
+        }
+        Ok(stats)
+    }
+
+    /// Set one exosuit stat.
+    ///
+    /// The game stores these in a signed 32-bit field, so a value above
+    /// [`SuitStat::MAX`] is refused rather than written as a negative.
+    pub fn set_suit_stat(&mut self, stat: SuitStat, value: u32) -> Result<bool, EditError> {
+        if value > SuitStat::MAX {
+            return Err(PlayerError::OutOfRange {
+                field: stat.field(),
+                min: 0,
+                max: i64::from(SuitStat::MAX),
+                value: i64::from(value),
+            }
+            .into());
+        }
+        let context = self.player_context().ok_or(PlayerError::NoPlayerState)?;
+        let path = format!("{context}.PlayerStateData.{}", stat.field());
+        let current = self.get(&path).ok().and_then(Value::as_i64).unwrap_or(0);
+        if current == i64::from(value) {
+            return Ok(false);
+        }
+        self.set(&path, Value::from(value))?;
         Ok(true)
     }
 
@@ -1244,6 +1385,9 @@ mod tests {
                 "Units": -1,
                 "Nanites": 500,
                 "Specials": 25,
+                "Health": 180,
+                "Shield": 100,
+                "Energy": 76,
                 "Inventory": {
                     "Slots": [
                         {"Type":{"InventoryType":"Substance"},"Id":"^CARBON","Amount":10,"MaxAmount":20,"DamageFactor":0.0,"FullyInstalled":true,"AddedAutomatically":false,"Index":{"X":0,"Y":0}},
@@ -1369,6 +1513,38 @@ mod tests {
         let mut bundle = bundle(SAVE);
         assert!(!bundle.set_currency(Currency::Nanites, 500).expect("no-op"));
         assert!(!bundle.document.is_dirty(), "a no-op must not mark the document dirty");
+    }
+
+    #[test]
+    fn suit_stats_read_and_write() {
+        let mut save = bundle(SAVE);
+        let stats = save.suit_stats().expect("stats");
+        assert_eq!(stats.health, 180);
+        assert_eq!(stats.shield, 100);
+        assert_eq!(stats.energy, 76);
+
+        assert!(save.set_suit_stat(SuitStat::Health, 1000).expect("set health"));
+        let text = String::from_utf8(save.document.payload().unwrap()).unwrap();
+        assert!(text.contains("\"Health\":1000"), "health written plainly: {text}");
+        assert_eq!(reload(&save).suit_stats().unwrap().health, 1000);
+
+        // Setting the same value again reports no change and keeps the document
+        // clean, the same rule the currencies follow.
+        let mut fresh = bundle(SAVE);
+        assert!(!fresh.set_suit_stat(SuitStat::Shield, 100).expect("no-op"));
+        assert!(!fresh.document.is_dirty());
+    }
+
+    #[test]
+    fn a_suit_stat_beyond_the_games_field_is_refused() {
+        let mut bundle = bundle(SAVE);
+        let error = bundle.set_suit_stat(SuitStat::Shield, u32::MAX).unwrap_err();
+        assert!(matches!(error, EditError::Player(PlayerError::OutOfRange { .. })), "{error}");
+        assert!(!bundle.document.is_dirty(), "a refused edit must leave the document clean");
+        assert_eq!(bundle.suit_stats().unwrap().shield, 100);
+        // The largest value the field can hold is accepted.
+        assert!(bundle.set_suit_stat(SuitStat::Shield, SuitStat::MAX).expect("max"));
+        assert_eq!(bundle.suit_stats().unwrap().shield, SuitStat::MAX);
     }
 
     #[test]
