@@ -39,13 +39,15 @@ pub const INSTRUCTIONS: &str = "\
 nmsedit edits No Man's Sky save files. Every write goes through the same edit \
 layer as the command-line tool: a timestamped zip backup is written first, an \
 unedited save is never rewritten, and the metadata file is patched rather than \
-regenerated. The game's live save folder (the one Steam Cloud syncs) is refused \
-unless confirm_live is true; only pass that when the user has explicitly asked \
-to edit the live folder, and say so in your answer. Prefer working on a copy. \
+regenerated. Writes to the game's live save folder — the one Steam Cloud syncs \
+— are refused. When that happens, copy the folder elsewhere, edit the copy, \
+and tell the user where it is; that is the whole point of the refusal, and it \
+is what to offer instead of confirm_live. Pass confirm_live only when the user \
+has explicitly asked for the live folder after being told what it means. \
 Balances (units, nanites, quicksilver) are currencies: use set_currency, not \
-add_item. Item ids are the game's own ids such as ^CARBON; search_items resolves \
-a name to an id. Inventories and learned lists need the community key mapping, \
-and item names need a data pack; the tools say so when one is missing.";
+add_item. Item ids are the game's own ids such as ^CARBON; search_items \
+resolves a name to an id. Inventories and learned lists need the community key \
+mapping, and item names need a data pack; the tools say so when one is missing.";
 
 /// A protocol-level failure, as JSON-RPC wants them.
 ///
@@ -262,7 +264,9 @@ mod tests {
         assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
         assert!(response["result"]["capabilities"]["tools"].is_object());
         assert_eq!(response["result"]["serverInfo"]["name"], SERVER_NAME);
-        assert!(response["result"]["instructions"].as_str().unwrap_or_default().contains("backup"));
+        let instructions = response["result"]["instructions"].as_str().unwrap_or_default();
+        assert!(instructions.contains("backup"), "{instructions}");
+        assert!(instructions.contains("copy the folder elsewhere"), "{instructions}");
     }
 
     #[test]
