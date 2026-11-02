@@ -4,7 +4,11 @@ A No Man's Sky save editor, written in Rust.
 
 **Status: early.** The format layer is complete and verified against real saves;
 currencies, inventories and known-item lists are editable from the library, the
-CLI and the desktop GUI.
+CLI, the desktop GUI and an MCP server for agents.
+
+Prebuilt binaries for Linux, Windows and macOS are attached to
+[releases](https://github.com/jeffrose/nms-save-editor/releases); tagging `v*`
+runs [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Why another one
 
@@ -254,6 +258,7 @@ cargo test --workspace              # unit tests always run
 tools/fetch-fixtures.sh <save.zip>  # then the fixture tests run too
 cargo run -p nms-cli -- info <save.hg>
 cargo run -p nms-gui -- <save-dir>   # or --release for a usable window
+cargo run -p nms-cli -- mcp          # the MCP server, for agents
 ```
 
 Fixture tests exercise real saves and skip with a message when none are

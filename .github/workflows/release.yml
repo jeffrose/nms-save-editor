@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing must not hide the others' results.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - name: macos-aarch64
+            os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar
+          # Cross-built on the arm64 runner: rustc and clang both handle the
+          # other Apple target, which keeps the workflow off the older Intel
+          # runner images.
+          - name: macos-x86_64
+            os: macos-14
+            target: x86_64-apple-darwin
+            archive: tar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p nms-cli -p nms-gui
+      - name: Stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          ext=""
+          case "$target" in *windows*) ext=".exe" ;; esac
+          mkdir -p dist
+          cp "target/${target}/release/nmsedit${ext}" dist/
+          cp "target/${target}/release/nmsedit-gui${ext}" dist/
+          cp README.md LICENSE-MIT LICENSE-APACHE dist/
+      - name: Archive (tar.gz)
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "nmsedit-${{ matrix.name }}.tar.gz" -C dist .
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path dist/* -DestinationPath "nmsedit-${{ matrix.name }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nmsedit-${{ matrix.name }}
+          path: nmsedit-${{ matrix.name }}.*
+          if-no-files-found: error
+
+  publish:
+    name: attach to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          body: |
+            Native binaries for Linux, Windows and macOS: `nmsedit` (the CLI and
+            MCP server) and `nmsedit-gui` (the window). No Java runtime.
+
+            **First run.** The editor needs two files it cannot ship: the
+            community key mapping, and a data pack generated from your own game
+            installation (the game's text is not distributed here). Point
+            `NMSEDIT_MAPPING` at the mapping file, and run:
+
+            ```sh
+            nmsedit data refresh
+            ```
+
+            **Safety.** An unedited save is never rewritten, every write takes a
+            timestamped zip backup first, and the game's live save folder is
+            refused unless you pass `--confirm-live` (Steam Cloud would sync an
+            edit to every machine on the account).
