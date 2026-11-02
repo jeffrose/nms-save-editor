@@ -3,8 +3,8 @@
 A No Man's Sky save editor, written in Rust.
 
 **Status: early.** The format layer is complete and verified against real saves;
-currencies, inventories and known-item lists are editable from the library and
-the CLI, and a desktop GUI browses saves, balances and inventory grids.
+currencies, inventories and known-item lists are editable from the library, the
+CLI and the desktop GUI.
 
 ## Why another one
 
@@ -116,10 +116,21 @@ slot adds the save version, balances, known-item counts and every inventory the
 player state carries; the inventory tab draws the grid the game draws, with item
 names from the data pack and per-slot details on click.
 
-This slice is **read-only**: the window never writes, so it is safe to point at
-a live save folder. Without a community key mapping the inventory fields fall
-back to their on-disk names, and without a data pack the item names are absent;
-the window says so in both cases.
+Editing follows a staging model: balances, slot amounts, repairs, and
+add/remove/move item actions change only the in-memory document, and a
+**Save** button writes them through the same edit layer the CLI uses — a
+timestamped zip backup first, then the data file, then patched metadata. A
+refused action (a full grid, an occupied cell, an amount the slot cannot hold)
+leaves the save clean, so an unedited save is still never rewritten. Switching
+slots or folders with staged changes asks first; **Discard** re-reads the file.
+
+The window is **read-only over a live save folder**: a path that looks like the
+game's own (or a Steam-managed Proton prefix) cannot be saved to from the GUI,
+and unlike the CLI there is no override. Copy the folder and open the copy.
+
+Without a community key mapping the inventory fields fall back to their on-disk
+names, and without a data pack the item names are absent; the window says so in
+both cases.
 
 ## Guarantees
 
@@ -194,7 +205,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
 | **M3 (done)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
 | **M4 (done)** | player state: currencies, inventory grids and slots, known-item lists — library and CLI, with the measured invariants in [`docs/format/player-state.md`](docs/format/player-state.md) |
-| **M5 (in progress)** | GUI (`egui`): slot browser, save summary and read-only inventory grids are done; editing and the JSON view are next |
+| **M5 (in progress)** | GUI (`egui`): slot browser, save summary, inventory grids and staged editing are done; the JSON view is next |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |
 

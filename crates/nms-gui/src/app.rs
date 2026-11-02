@@ -1,8 +1,15 @@
-//! The window: a slot browser, a save summary, and inventory grids.
+//! The window: a slot browser, a save summary, and editable inventory grids.
 //!
-//! This first slice is **read-only**. Every widget below draws state from
-//! [`crate::session::Session`]; nothing in this file opens a file or touches a
-//! save, so the edit layer's safety rules apply unchanged when editing is added.
+//! Editing is a staging model: every action changes only the in-memory
+//! document, so the file on disk is untouched until **Save** is pressed. A
+//! refused action (a full grid, an occupied cell) leaves the document clean,
+//! because the edit layer validates against an immutable view first. Save then
+//! goes through [`crate::session::Session::save`], which writes a timestamped
+//! backup and patches the metadata exactly like the CLI does.
+//!
+//! The window refuses to write to a live, cloud-synced save folder. That is the
+//! same rule the edit layer enforces, and skipping it would put an edit on every
+//! machine signed into the account.
 
 use std::path::PathBuf;
 
@@ -21,18 +28,168 @@ enum Tab {
     Inventories,
 }
 
+/// The item kind a new stack should be written as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KindChoice {
+    /// Let the edit layer infer it from the save.
+    Auto,
+    Substance,
+    Product,
+    Technology,
+}
+
+impl KindChoice {
+    const ALL: [KindChoice; 4] =
+        [KindChoice::Auto, KindChoice::Substance, KindChoice::Product, KindChoice::Technology];
+
+    fn label(self) -> &'static str {
+        match self {
+            KindChoice::Auto => "from the save",
+            KindChoice::Substance => "substance",
+            KindChoice::Product => "product",
+            KindChoice::Technology => "technology",
+        }
+    }
+
+    fn item_kind(self) -> Option<ItemKind> {
+        match self {
+            KindChoice::Auto => None,
+            KindChoice::Substance => Some(ItemKind::Substance),
+            KindChoice::Product => Some(ItemKind::Product),
+            KindChoice::Technology => Some(ItemKind::Technology),
+        }
+    }
+}
+
+/// What the controls hold, as opposed to what the save holds.
+struct EditState {
+    selected_inventory: usize,
+    selected_slot: Option<usize>,
+    /// One text box per [`Currency::ALL`] entry, so a balance can be typed.
+    currency_inputs: [String; 3],
+    amount_input: String,
+    add_id: String,
+    add_amount: String,
+    add_kind: KindChoice,
+    add_max: String,
+    /// Slot being moved; the next empty-cell click is the destination.
+    moving: Option<usize>,
+}
+
+impl Default for EditState {
+    fn default() -> Self {
+        EditState {
+            selected_inventory: 0,
+            selected_slot: None,
+            currency_inputs: Default::default(),
+            amount_input: String::new(),
+            add_id: String::new(),
+            add_amount: String::new(),
+            add_kind: KindChoice::Auto,
+            add_max: String::new(),
+            moving: None,
+        }
+    }
+}
+
+impl EditState {
+    /// Fill every control from the loaded save.
+    fn sync(&mut self, open: &OpenSave) {
+        if self.selected_inventory >= open.inventories.len() {
+            self.selected_inventory = 0;
+        }
+        if let Some(currencies) = open.currencies {
+            for (index, currency) in Currency::ALL.iter().enumerate() {
+                self.currency_inputs[index] = currencies.get(*currency).to_string();
+            }
+        }
+        let still_there = self.selected_slot.is_some_and(|position| {
+            open.inventories
+                .get(self.selected_inventory)
+                .is_some_and(|inventory| inventory.slots.iter().any(|slot| slot.position == position))
+        });
+        if !still_there {
+            self.selected_slot = None;
+        }
+        if self.moving.is_some_and(|position| self.selected_slot != Some(position)) {
+            self.moving = None;
+        }
+        self.sync_amount(open);
+    }
+
+    /// Put the selected slot's amount into the editor text box.
+    fn sync_amount(&mut self, open: &OpenSave) {
+        let slot = self.selected_slot.and_then(|position| {
+            let inventory = open.inventories.get(self.selected_inventory)?;
+            inventory.slots.iter().find(|slot| slot.position == position)
+        });
+        self.amount_input = slot.map(|slot| slot.amount.to_string()).unwrap_or_default();
+    }
+
+    fn select_slot(&mut self, open: &OpenSave, position: usize) {
+        self.selected_slot = Some(position);
+        self.moving = None;
+        self.sync_amount(open);
+    }
+
+    fn clear_slot(&mut self) {
+        self.selected_slot = None;
+        self.amount_input.clear();
+        self.moving = None;
+    }
+}
+
+/// An edit the drawing code asked for, applied after the frame is drawn so the
+/// window never holds a borrow of the save while changing it.
+enum Action {
+    SetCurrency(Currency, u32),
+    AddItem {
+        inventory: usize,
+        id: String,
+        amount: i64,
+        kind: Option<ItemKind>,
+        max: Option<i64>,
+    },
+    SetAmount {
+        inventory: usize,
+        position: usize,
+        amount: i64,
+    },
+    Repair {
+        inventory: usize,
+        position: usize,
+    },
+    RepairAll,
+    Remove {
+        inventory: usize,
+        position: usize,
+    },
+    Move {
+        inventory: usize,
+        position: usize,
+        cell: Cell,
+    },
+    Save,
+    Discard,
+}
+
+/// A switch that would throw away staged edits, held until the user decides.
+enum PendingSwitch {
+    Slot(usize),
+    Folder(PathBuf),
+}
+
 /// The application.
 pub struct EditorApp {
     session: Session,
     tab: Tab,
     path_input: String,
-    /// Index into `OpenSave::inventories`.
-    selected_inventory: usize,
-    /// Position of the clicked slot in the on-disk `Slots` array, which is what
-    /// edit commands will address once editing lands.
-    selected_slot: Option<usize>,
+    edit: EditState,
     /// Last message shown in the bottom bar.
     status: Option<String>,
+    pending_switch: Option<PendingSwitch>,
+    confirm_save: bool,
+    confirm_discard: bool,
 }
 
 impl EditorApp {
@@ -47,14 +204,18 @@ impl EditorApp {
 
     /// Build the app around an already-loaded session.
     pub fn from_session(session: Session) -> EditorApp {
-        EditorApp {
+        let mut app = EditorApp {
             path_input: session.dir.display().to_string(),
             session,
             tab: Tab::Overview,
-            selected_inventory: 0,
-            selected_slot: None,
+            edit: EditState::default(),
             status: None,
-        }
+            pending_switch: None,
+            confirm_save: false,
+            confirm_discard: false,
+        };
+        app.sync_edit();
+        app
     }
 
     /// Draw one frame.
@@ -62,21 +223,86 @@ impl EditorApp {
     /// Separate from `eframe::App::update` so a test can drive the window with
     /// a bare egui context, without a window or a GPU.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.edit.moving = None;
+            self.confirm_save = false;
+            self.confirm_discard = false;
+            self.pending_switch = None;
+        }
         self.top_bar(ctx);
         self.bottom_bar(ctx);
         self.slot_panel(ctx);
         self.central(ctx);
+        self.dialogs(ctx);
+    }
+
+    /// True when the open save may be edited.
+    ///
+    /// A live folder is read-only here; see the module comment.
+    fn editable(&self) -> bool {
+        self.session.open.is_some() && self.session.live_location().is_none()
+    }
+
+    fn sync_edit(&mut self) {
+        if let Some(open) = self.session.open.as_ref() {
+            self.edit.sync(open);
+        }
+    }
+
+    /// Apply one staged action and refresh the views it touched.
+    fn apply(&mut self, action: Action) {
+        let result = match action {
+            Action::SetCurrency(currency, value) => self.session.set_currency(currency, value),
+            Action::AddItem { inventory, id, amount, kind, max } => {
+                self.session.add_item(inventory, &id, amount, kind, max)
+            }
+            Action::SetAmount { inventory, position, amount } => {
+                self.session.set_amount(inventory, position, amount)
+            }
+            Action::Repair { inventory, position } => self.session.repair(inventory, position),
+            Action::RepairAll => self.session.repair_all(),
+            Action::Remove { inventory, position } => {
+                if self.edit.selected_slot == Some(position) {
+                    self.edit.clear_slot();
+                }
+                self.session.remove_item(inventory, position)
+            }
+            Action::Move { inventory, position, cell } => self.session.move_item(inventory, position, cell),
+            Action::Save => {
+                self.edit.moving = None;
+                self.session.save()
+            }
+            Action::Discard => {
+                self.edit = EditState::default();
+                self.session.reload()
+            }
+        };
+        match result {
+            Ok(message) => self.status = Some(message),
+            Err(message) => self.status = Some(format!("error: {message}")),
+        }
+        self.sync_edit();
     }
 
     fn open_folder(&mut self) {
-        if self.path_input.trim().is_empty() {
+        let text = self.path_input.trim().to_string();
+        if text.is_empty() {
             self.status = Some("type a save folder first".to_string());
             return;
         }
-        self.session = Session::open_dir(&PathBuf::from(self.path_input.trim()));
-        self.selected_inventory = 0;
-        self.selected_slot = None;
+        if self.session.dirty() {
+            self.pending_switch = Some(PendingSwitch::Folder(PathBuf::from(text)));
+            return;
+        }
+        self.load_folder(PathBuf::from(text));
+    }
+
+    fn load_folder(&mut self, path: PathBuf) {
+        self.session = Session::open_dir(&path);
+        self.edit = EditState::default();
+        self.tab = Tab::Overview;
         self.status = self.session.error.clone();
+        self.sync_edit();
     }
 
     fn top_bar(&mut self, ctx: &egui::Context) {
@@ -99,6 +325,7 @@ impl EditorApp {
                 if ui.button("Rescan").clicked() {
                     self.session.rescan();
                     self.status = Some(format!("{} slot(s) found", self.session.slots.len()));
+                    self.sync_edit();
                 }
             });
             ui.add_space(2.0);
@@ -106,6 +333,8 @@ impl EditorApp {
     }
 
     fn slot_panel(&mut self, ctx: &egui::Context) {
+        let dirty = self.session.dirty();
+        let mut requested = None;
         egui::SidePanel::left("slots").resizable(true).default_width(260.0).show(ctx, |ui| {
             ui.add_space(4.0);
             ui.label(RichText::new("SLOTS").small().strong());
@@ -115,7 +344,6 @@ impl EditorApp {
                 return;
             }
 
-            let mut clicked = None;
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 for (index, entry) in self.session.slots.iter().enumerate() {
                     let selected = self
@@ -125,7 +353,7 @@ impl EditorApp {
                         .is_some_and(|open| open.entry.data_path == entry.data_path);
                     let title = RichText::new(entry.title()).strong();
                     if ui.selectable_label(selected, title).clicked() {
-                        clicked = Some(index);
+                        requested = Some(index);
                     }
                     ui.label(RichText::new(entry.subtitle()).small().weak());
                     if let Some(problem) = &entry.problem {
@@ -135,21 +363,35 @@ impl EditorApp {
                     ui.add_space(6.0);
                 }
             });
-            if let Some(index) = clicked {
-                self.session.select(index);
-                self.selected_inventory = 0;
-                self.selected_slot = None;
-            }
         });
+        if let Some(index) = requested {
+            if dirty {
+                self.pending_switch = Some(PendingSwitch::Slot(index));
+            } else {
+                self.session.select(index);
+                self.edit.clear_slot();
+                self.tab = Tab::Overview;
+                self.status = None;
+                self.sync_edit();
+            }
+        }
     }
 
     fn central(&mut self, ctx: &egui::Context) {
+        let editable = self.editable();
+        let notes = self.session.notes.clone();
+        let mut action = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = &self.session.error {
                 ui.colored_label(Color32::from_rgb(220, 110, 110), error);
                 ui.separator();
             }
-            let Some(open) = self.session.open.as_ref() else {
+            // Missing mapping or data pack notes, in both the empty and the
+            // loaded state: they explain why names may be absent.
+            for note in &notes {
+                ui.label(RichText::new(note).small().weak());
+            }
+            if self.session.open.is_none() {
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {
                     ui.heading("No save open");
@@ -158,15 +400,7 @@ impl EditorApp {
                             .weak(),
                     );
                 });
-                for note in &self.session.notes {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(note).small().weak());
-                }
                 return;
-            };
-
-            for note in &self.session.notes {
-                ui.label(RichText::new(note).small().weak());
             }
 
             ui.horizontal(|ui| {
@@ -179,47 +413,183 @@ impl EditorApp {
             });
             ui.separator();
 
-            match self.tab {
-                Tab::Overview => overview(ui, open),
+            let Some(open) = self.session.open.as_ref() else { return };
+            if !editable {
+                live_banner(ui);
+            }
+            action = match self.tab {
+                Tab::Overview => overview(ui, open, &mut self.edit, editable),
                 Tab::Inventories => inventories_tab(
                     ui,
                     open,
+                    &mut self.edit,
+                    editable,
                     self.session.pack.as_ref(),
-                    &mut self.selected_inventory,
-                    &mut self.selected_slot,
                 ),
-            }
+            };
         });
+        if let Some(action) = action {
+            self.apply(action);
+        }
     }
 
     fn bottom_bar(&mut self, ctx: &egui::Context) {
+        let dirty = self.session.dirty();
+        let live = self.session.live_location();
+        let dir = if self.session.dir.as_os_str().is_empty() {
+            "no folder".to_string()
+        } else {
+            self.session.dir.display().to_string()
+        };
+        let open_text = self.session.open.as_ref().map(|open| {
+            format!("{} · {} inventories", open.entry.slot, open.inventories.len())
+        });
+        let status = self.status.clone();
+        let mut save = false;
+        let mut discard = false;
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(self.session.dir.display().to_string()).small().weak());
+                ui.label(RichText::new(dir).small().weak());
                 ui.separator();
-                match self.session.open.as_ref() {
-                    Some(open) => {
-                        let text = format!(
-                            "{}  ·  {} inventories  ·  read-only preview",
-                            open.entry.slot,
-                            open.inventories.len()
-                        );
-                        ui.label(RichText::new(text).small().weak());
-                    }
-                    None => {
-                        ui.label(RichText::new("no save open").small().weak());
-                    }
-                }
-                if self.session.pack.is_none() {
+                match &open_text {
+                    Some(text) => ui.label(RichText::new(text).small().weak()),
+                    None => ui.label(RichText::new("no save open").small().weak()),
+                };
+                if live.is_some() {
                     ui.separator();
-                    ui.label(RichText::new("no data pack: item names unavailable").small().weak());
+                    ui.label(RichText::new("live folder · read-only").small().weak());
                 }
-                if let Some(status) = &self.status {
+                if dirty {
+                    ui.separator();
+                    ui.label(RichText::new("staged changes").small());
+                    if live.is_none() {
+                        if ui.button("Save").clicked() {
+                            save = true;
+                        }
+                        if ui.button("Discard").clicked() {
+                            discard = true;
+                        }
+                    }
+                }
+                if let Some(status) = &status {
                     ui.separator();
                     ui.label(RichText::new(status).small());
                 }
             });
         });
+        if save {
+            self.confirm_save = true;
+        }
+        if discard {
+            self.confirm_discard = true;
+        }
+    }
+
+    fn dialogs(&mut self, ctx: &egui::Context) {
+        let mut switch = false;
+        if self.pending_switch.is_some() {
+            let mut discard = false;
+            let mut cancel = false;
+            egui::Window::new("Discard staged changes?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label("The open save has changes that have not been written.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Discard and switch").clicked() {
+                            discard = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if discard {
+                switch = true;
+            }
+            if cancel {
+                self.pending_switch = None;
+            }
+        }
+        if switch {
+            match self.pending_switch.take() {
+                Some(PendingSwitch::Slot(index)) => {
+                    self.session.select(index);
+                    self.edit.clear_slot();
+                    self.tab = Tab::Overview;
+                    self.status = None;
+                    self.sync_edit();
+                }
+                Some(PendingSwitch::Folder(path)) => self.load_folder(path),
+                None => {}
+            }
+        }
+
+        if self.confirm_save {
+            let mut do_save = false;
+            let mut cancel = false;
+            let file = self
+                .session
+                .open
+                .as_ref()
+                .map(|open| open.entry.data_path.display().to_string())
+                .unwrap_or_default();
+            egui::Window::new("Save changes")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(format!("Write the staged changes to {file}?"));
+                    ui.label(RichText::new("A timestamped zip backup is written first.").weak());
+                    ui.label(
+                        RichText::new("An unedited save is never rewritten; only changed fields move.")
+                            .weak(),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            do_save = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_save {
+                self.confirm_save = false;
+                self.apply(Action::Save);
+            }
+            if cancel {
+                self.confirm_save = false;
+            }
+        }
+
+        if self.confirm_discard {
+            let mut do_discard = false;
+            let mut cancel = false;
+            egui::Window::new("Discard changes")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label("Throw away every staged change and re-read the file from disk?");
+                    ui.horizontal(|ui| {
+                        if ui.button("Discard").clicked() {
+                            do_discard = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_discard {
+                self.confirm_discard = false;
+                self.apply(Action::Discard);
+            }
+            if cancel {
+                self.confirm_discard = false;
+            }
+        }
     }
 }
 
@@ -233,7 +603,21 @@ impl eframe::App for EditorApp {
 // drawing helpers
 // ---------------------------------------------------------------------------
 
-fn overview(ui: &mut egui::Ui, open: &OpenSave) {
+fn live_banner(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "This is the game's live save folder, so the window is read-only here. \
+             Copy the folder somewhere else and open the copy to edit it.",
+        )
+        .small()
+        .color(Color32::from_rgb(200, 140, 90)),
+    );
+    ui.add_space(4.0);
+}
+
+fn overview(ui: &mut egui::Ui, open: &OpenSave, edit: &mut EditState, editable: bool) -> Option<Action> {
+    let mut action = None;
     ui.add_space(6.0);
     ui.heading(open.entry.title());
     ui.label(RichText::new(open.entry.subtitle()).weak());
@@ -259,14 +643,28 @@ fn overview(ui: &mut egui::Ui, open: &OpenSave) {
     match &open.currencies {
         Some(currencies) => {
             egui::Grid::new("currencies").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
-                for currency in Currency::ALL {
+                for (index, currency) in Currency::ALL.iter().enumerate() {
+                    let current = currencies.get(*currency);
                     ui.label(currency.label());
-                    let value = currencies.get(currency);
-                    let mut text = thousands(value);
-                    if value == u32::MAX {
-                        text.push_str("  (cap)");
-                    }
-                    ui.label(RichText::new(text).strong());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(thousands(current)).strong());
+                        if editable {
+                            ui.add_space(8.0);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut edit.currency_inputs[index])
+                                    .desired_width(110.0),
+                            );
+                            let parsed = parse_u32(&edit.currency_inputs[index]);
+                            if ui.add_enabled(parsed.is_some(), egui::Button::new("Set")).clicked() {
+                                if let Some(value) = parsed {
+                                    action = Some(Action::SetCurrency(*currency, value));
+                                }
+                            }
+                        }
+                        if current == u32::MAX {
+                            ui.label(RichText::new("(cap)").weak());
+                        }
+                    });
                     ui.end_row();
                 }
             });
@@ -291,22 +689,25 @@ fn overview(ui: &mut egui::Ui, open: &OpenSave) {
             }
         });
     }
+
+    action
 }
 
 fn inventories_tab(
     ui: &mut egui::Ui,
     open: &OpenSave,
+    edit: &mut EditState,
+    editable: bool,
     pack: Option<&DataPack>,
-    selected_inventory: &mut usize,
-    selected_slot: &mut Option<usize>,
-) {
+) -> Option<Action> {
+    let mut action = None;
     if open.inventories.is_empty() {
         ui.add_space(16.0);
         ui.label("This save has no readable inventories.");
         ui.label(RichText::new("Inventory fields need the community key mapping; see the readme.").weak());
-        return;
+        return None;
     }
-    *selected_inventory = (*selected_inventory).min(open.inventories.len() - 1);
+    edit.selected_inventory = edit.selected_inventory.min(open.inventories.len() - 1);
 
     egui::SidePanel::left("inventory-list").resizable(true).default_width(240.0).show_inside(ui, |ui| {
         ui.label(RichText::new("INVENTORIES").small().strong());
@@ -316,15 +717,17 @@ fn inventories_tab(
                 if inventory.role == InventoryRole::Auxiliary {
                     text.push_str("  (machine)");
                 }
-                if ui.selectable_label(*selected_inventory == index, text).clicked() {
-                    *selected_inventory = index;
-                    *selected_slot = None;
+                if ui.selectable_label(edit.selected_inventory == index, text).clicked() {
+                    if edit.selected_inventory != index {
+                        edit.selected_inventory = index;
+                        edit.clear_slot();
+                    }
                 }
             }
         });
     });
 
-    let inventory = &open.inventories[*selected_inventory];
+    let inventory = &open.inventories[edit.selected_inventory];
     ui.add_space(6.0);
     let details = format!(
         "{}x{}  ·  {}/{} slots  ·  {}  ·  class {}",
@@ -338,26 +741,150 @@ fn inventories_tab(
     ui.horizontal(|ui| {
         ui.heading(inventory.path.label());
         ui.label(RichText::new(details).weak());
+        if editable
+            && ui
+                .button("Repair all")
+                .on_hover_text("Repairs every damaged slot in the save, not just this inventory")
+                .clicked()
+        {
+            action = Some(Action::RepairAll);
+        }
     });
+    if inventory.role == InventoryRole::Auxiliary {
+        ui.label(
+            RichText::new(
+                "Machine-owned grid: its amounts are recipe quantities, so they are left out of \
+                 stack-size statistics.",
+            )
+            .small()
+            .weak(),
+        );
+    }
     ui.add_space(6.0);
+
+    if editable {
+        if let Some(add) = add_item_form(ui, edit, pack) {
+            action = Some(add);
+        }
+        ui.add_space(6.0);
+    }
+
+    if let Some(position) = edit.moving {
+        ui.label(
+            RichText::new(format!(
+                "Moving slot {position}: click an empty cell to drop it, or press Esc to cancel."
+            ))
+            .small()
+            .color(Color32::from_rgb(120, 180, 120)),
+        );
+        ui.add_space(4.0);
+    }
 
     if inventory.width == 0 || inventory.height == 0 {
         ui.label(RichText::new("this grid is empty").weak());
-        return;
+        return action;
     }
-    grid(ui, inventory, pack, selected_slot);
 
-    if let Some(position) = *selected_slot {
+    let free = inventory.free_cells();
+    if let Some(cell) = grid(ui, inventory, pack, edit.selected_slot, edit.moving, &free) {
+        match edit.moving {
+            Some(position) => {
+                let occupied_elsewhere = inventory
+                    .slots
+                    .iter()
+                    .any(|slot| slot.cell == cell && slot.position != position);
+                if !occupied_elsewhere {
+                    action = Some(Action::Move { inventory: edit.selected_inventory, position, cell });
+                }
+                edit.moving = None;
+            }
+            None => match inventory.slots.iter().find(|slot| slot.cell == cell) {
+                Some(slot) => edit.select_slot(open, slot.position),
+                None => edit.clear_slot(),
+            },
+        }
+    }
+
+    if let Some(position) = edit.selected_slot {
         if let Some(slot) = inventory.slots.iter().find(|slot| slot.position == position) {
             ui.add_space(8.0);
             ui.separator();
-            slot_details(ui, slot, pack);
+            if let Some(slot_action) =
+                slot_details(ui, slot, pack, edit, editable, inventory.is_full())
+            {
+                action = Some(slot_action);
+            }
         }
     }
+    action
 }
 
-/// Draw an inventory grid and record the clicked slot.
-fn grid(ui: &mut egui::Ui, inventory: &Inventory, pack: Option<&DataPack>, selected: &mut Option<usize>) {
+fn add_item_form(ui: &mut egui::Ui, edit: &mut EditState, pack: Option<&DataPack>) -> Option<Action> {
+    let mut action = None;
+    egui::CollapsingHeader::new("Add item").default_open(false).show(ui, |ui| {
+        egui::Grid::new("add-item").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label("Item id");
+            ui.add(
+                egui::TextEdit::singleline(&mut edit.add_id)
+                    .hint_text("^CARBON")
+                    .desired_width(240.0),
+            );
+            ui.end_row();
+            ui.label("Amount");
+            ui.add(
+                egui::TextEdit::singleline(&mut edit.add_amount)
+                    .hint_text("1")
+                    .desired_width(100.0),
+            );
+            ui.end_row();
+            ui.label("Kind");
+            egui::ComboBox::from_id_salt("add-kind")
+                .selected_text(edit.add_kind.label())
+                .show_ui(ui, |ui| {
+                    for choice in KindChoice::ALL {
+                        ui.selectable_value(&mut edit.add_kind, choice, choice.label());
+                    }
+                });
+            ui.end_row();
+            ui.label("Stack size");
+            ui.add(
+                egui::TextEdit::singleline(&mut edit.add_max)
+                    .hint_text("from the save")
+                    .desired_width(100.0),
+            );
+            ui.end_row();
+        });
+
+        let name = pack.and_then(|pack| pack.item_name(edit.add_id.trim()));
+        if let Some(name) = name.filter(|name| !name.is_empty()) {
+            ui.label(RichText::new(name).small().weak());
+        }
+        let amount = parse_i64(&edit.add_amount);
+        let valid = !edit.add_id.trim().is_empty() && amount.is_some();
+        if ui.add_enabled(valid, egui::Button::new("Add to this inventory")).clicked() {
+            if let Some(amount) = amount {
+                action = Some(Action::AddItem {
+                    inventory: edit.selected_inventory,
+                    id: edit.add_id.trim().to_string(),
+                    amount,
+                    kind: edit.add_kind.item_kind(),
+                    max: parse_i64(&edit.add_max),
+                });
+            }
+        }
+    });
+    action
+}
+
+/// Draw an inventory grid, returning the cell that was clicked.
+fn grid(
+    ui: &mut egui::Ui,
+    inventory: &Inventory,
+    pack: Option<&DataPack>,
+    selected: Option<usize>,
+    moving: Option<usize>,
+    free: &[Cell],
+) -> Option<Cell> {
     const CELL: f32 = 46.0;
     const GAP: f32 = 4.0;
 
@@ -382,38 +909,52 @@ fn grid(ui: &mut egui::Ui, inventory: &Inventory, pack: Option<&DataPack>, selec
         )
     };
     let damaged = Color32::from_rgb(206, 84, 84);
+    let moving_color = Color32::from_rgb(120, 180, 120);
     let outline = if dark { Color32::from_rgb(60, 62, 68) } else { Color32::from_rgb(196, 198, 204) };
     let strong = ui.visuals().strong_text_color();
     let weak = ui.visuals().weak_text_color();
 
+    let mut clicked = None;
     for y in 0..inventory.height {
         for x in 0..inventory.width {
             let cell = Cell::new(x, y);
             let min = rect.min + Vec2::new(x as f32 * (CELL + GAP), y as f32 * (CELL + GAP));
             let cell_rect = egui::Rect::from_min_size(min, Vec2::splat(CELL));
             let slot = inventory.slots.iter().find(|slot| slot.cell == cell);
-            let fill = match slot {
-                Some(slot) => match slot.kind {
-                    ItemKind::Substance => substance,
-                    ItemKind::Product => product,
-                    ItemKind::Technology => technology,
-                },
-                None => empty,
+            let is_move_target = moving.is_some() && free.contains(&cell);
+            let fill = if is_move_target {
+                if dark {
+                    Color32::from_rgb(34, 58, 40)
+                } else {
+                    Color32::from_rgb(214, 238, 208)
+                }
+            } else {
+                match slot {
+                    Some(slot) => match slot.kind {
+                        ItemKind::Substance => substance,
+                        ItemKind::Product => product,
+                        ItemKind::Technology => technology,
+                    },
+                    None => empty,
+                }
             };
 
             let painter = ui.painter();
             painter.rect_filled(cell_rect, CornerRadius::same(4), fill);
             let stroke = match slot {
+                Some(slot) if moving == Some(slot.position) => Stroke::new(2.0, moving_color),
                 Some(slot) if slot.damaged() => Stroke::new(2.0, damaged),
-                Some(slot) if *selected == Some(slot.position) => Stroke::new(2.0, strong),
+                Some(slot) if selected == Some(slot.position) => Stroke::new(2.0, strong),
+                _ if is_move_target => Stroke::new(2.0, moving_color),
                 _ => Stroke::new(1.0, outline),
             };
             painter.rect_stroke(cell_rect, CornerRadius::same(4), stroke, StrokeKind::Inside);
 
-            let response = ui.interact(cell_rect, ui.id().with((x, y, "cell")), Sense::click());
+            let id = ui.id().with((inventory.path.label(), x, y));
+            let response = ui.interact(cell_rect, id, Sense::click());
             let Some(slot) = slot else {
                 if response.clicked() {
-                    *selected = None;
+                    clicked = Some(cell);
                 }
                 continue;
             };
@@ -440,18 +981,31 @@ fn grid(ui: &mut egui::Ui, inventory: &Inventory, pack: Option<&DataPack>, selec
             );
 
             let name = pack.and_then(|pack| pack.item_name(&slot.id)).unwrap_or_else(|| slot.id.clone());
-            let response = response.on_hover_text(format!(
-                "{name}\n{}\n{} / {}\n{}\n\nclick for details",
-                slot.id, slot.amount, slot.max_amount, slot.cell
-            ));
-            if response.clicked() {
-                *selected = Some(slot.position);
+            let hover = if moving.is_some() {
+                format!("{name}\n{}\nclick to cancel the move", slot.id)
+            } else {
+                format!(
+                    "{name}\n{}\n{} / {}\n{}\n\nclick for details",
+                    slot.id, slot.amount, slot.max_amount, slot.cell
+                )
+            };
+            if response.on_hover_text(hover).clicked() {
+                clicked = Some(cell);
             }
         }
     }
+    clicked
 }
 
-fn slot_details(ui: &mut egui::Ui, slot: &ItemSlot, pack: Option<&DataPack>) {
+fn slot_details(
+    ui: &mut egui::Ui,
+    slot: &ItemSlot,
+    pack: Option<&DataPack>,
+    edit: &mut EditState,
+    editable: bool,
+    inventory_full: bool,
+) -> Option<Action> {
+    let mut action = None;
     let name = pack.and_then(|pack| pack.item_name(&slot.id)).unwrap_or_else(|| slot.id.clone());
     ui.horizontal(|ui| {
         ui.label(RichText::new(name).heading());
@@ -465,6 +1019,33 @@ fn slot_details(ui: &mut egui::Ui, slot: &ItemSlot, pack: Option<&DataPack>) {
         fact(ui, "Damage", Some(format!("{:.0}%", slot.damage * 100.0)));
         fact(ui, "Installed", Some(if slot.installed { "yes" } else { "no" }.to_string()));
     });
+
+    if !editable {
+        return None;
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label("Amount");
+        ui.add(egui::TextEdit::singleline(&mut edit.amount_input).desired_width(100.0));
+        if ui.add_enabled(parse_i64(&edit.amount_input).is_some(), egui::Button::new("Set")).clicked() {
+            if let Some(amount) = parse_i64(&edit.amount_input) {
+                let position = slot.position;
+                let inventory = edit.selected_inventory;
+                action = Some(Action::SetAmount { inventory, position, amount });
+            }
+        }
+        if ui.add_enabled(slot.damaged(), egui::Button::new("Repair")).clicked() {
+            action = Some(Action::Repair { inventory: edit.selected_inventory, position: slot.position });
+        }
+        if ui.add_enabled(!inventory_full, egui::Button::new("Move")).clicked() {
+            edit.moving = Some(slot.position);
+        }
+        if ui.button("Remove").clicked() {
+            action = Some(Action::Remove { inventory: edit.selected_inventory, position: slot.position });
+        }
+    });
+    action
 }
 
 fn fact(ui: &mut egui::Ui, name: &str, value: Option<String>) {
@@ -487,6 +1068,18 @@ fn thousands(value: u32) -> String {
         out.push(ch);
     }
     out
+}
+
+/// Parse a balance, ignoring the separators the display uses.
+fn parse_u32(text: &str) -> Option<u32> {
+    let digits: String = text.chars().filter(|ch| !ch.is_whitespace() && *ch != '_' && *ch != ',').collect();
+    digits.parse().ok()
+}
+
+/// Parse a slot amount; technology uses `-1` for "not chargeable".
+fn parse_i64(text: &str) -> Option<i64> {
+    let digits: String = text.chars().filter(|ch| !ch.is_whitespace() && *ch != '_' && *ch != ',').collect();
+    digits.parse().ok()
 }
 
 fn age_text(time: std::time::SystemTime) -> String {
@@ -526,7 +1119,7 @@ mod tests {
                     "Slots": [
                         {"Type":{"InventoryType":"Substance"},"Id":"^CARBON","Amount":10,"MaxAmount":20,"DamageFactor":0.0,"FullyInstalled":true,"AddedAutomatically":false,"Index":{"X":0,"Y":0}}
                     ],
-                    "ValidSlotIndices": [{"X":0,"Y":0},{"X":1,"Y":0}],
+                    "ValidSlotIndices": [{"X":0,"Y":0}, {"X":1,"Y":0}],
                     "Class": {"InventoryClass": "C"},
                     "StackSizeGroup": {"InventoryStackSizeGroup": "Personal"},
                     "Width": 2,
@@ -601,19 +1194,28 @@ mod tests {
     }
 
     #[test]
+    fn balances_accept_the_separators_the_window_draws() {
+        assert_eq!(parse_u32("1 234 567"), Some(1_234_567));
+        assert_eq!(parse_u32("4_294_967_295"), Some(u32::MAX));
+        assert_eq!(parse_u32("12x"), None);
+        assert_eq!(parse_i64("-1"), Some(-1));
+    }
+
+    #[test]
     fn the_window_draws_the_save_it_opens() {
         let dir = scratch("overview");
         let mut app = app(&dir);
         app.session.select(0);
+        app.sync_edit();
 
         let text = drawn_text(&mut app);
-        for expected in ["nmsedit", "PlayerState1", "CURRENCIES", "units", "1 200", "KNOWN ITEMS"] {
+        for expected in ["nmsedit", "PlayerState1", "CURRENCIES", "units", "1 200", "Set", "KNOWN ITEMS"] {
             assert!(text.contains(expected), "the overview should draw {expected:?}:\n{text}");
         }
 
         app.tab = Tab::Inventories;
         let text = drawn_text(&mut app);
-        for expected in ["INVENTORIES", "Inventory", "CARBON"] {
+        for expected in ["INVENTORIES", "Inventory", "CARBON", "Add item", "Repair all"] {
             assert!(text.contains(expected), "the inventory tab should draw {expected:?}:\n{text}");
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -624,5 +1226,22 @@ mod tests {
         let mut app = EditorApp::from_session(Session::empty());
         let text = drawn_text(&mut app);
         assert!(text.contains("No save open"), "expected the empty-state hint:\n{text}");
+    }
+
+    #[test]
+    fn staged_edits_show_a_save_and_discard_button() {
+        let dir = scratch("staged");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        // Stage a change through the same path the widgets use.
+        app.apply(Action::SetCurrency(Currency::Units, 4321));
+        assert!(app.session.dirty());
+
+        let text = drawn_text(&mut app);
+        for expected in ["staged changes", "Save", "Discard"] {
+            assert!(text.contains(expected), "expected {expected:?} once something is staged:\n{text}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
