@@ -124,6 +124,11 @@ refused action (a full grid, an occupied cell, an amount the slot cannot hold)
 leaves the save clean, so an unedited save is still never rewritten. Switching
 slots or folders with staged changes asks first; **Discard** re-reads the file.
 
+The **Known items** tab holds the five learned-id lists — products,
+technology, specials, base parts and refiner recipes — with a filter over the
+id and the item name, and add/remove actions that stage like every other edit.
+The overview's counts jump straight to the list they name.
+
 The **JSON** tab is the escape hatch for everything the typed editors do not
 cover: the whole document as a tree, with readable names on the keys and the
 on-disk spelling on hover, and a search that finds a field by key or value
@@ -214,7 +219,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
 | **M3 (done)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
 | **M4 (done)** | player state: currencies, inventory grids and slots, known-item lists — library and CLI, with the measured invariants in [`docs/format/player-state.md`](docs/format/player-state.md) |
-| **M5 (in progress)** | GUI (`egui`): slot browser, save summary, inventory grids, staged editing and the JSON view are done; known-item list editing is next |
+| **M5 (in progress)** | GUI (`egui`): slot browser, save summary, balances, inventory grids, known-item lists, staged editing and the JSON view are done; a backup-history panel is next |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |
 

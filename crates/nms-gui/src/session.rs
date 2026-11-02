@@ -113,6 +113,16 @@ pub struct JsonHit {
 /// How many hits a search keeps before it stops looking.
 pub const JSON_HIT_LIMIT: usize = 300;
 
+/// One known-item list and the ids it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownEntry {
+    /// Which list.
+    pub list: KnownList,
+    /// The ids, in a display order that does not depend on how the file
+    /// happened to be written.
+    pub ids: Vec<String>,
+}
+
 /// A save that has been opened and decoded.
 pub struct OpenSave {
     /// The slot entry it was loaded from.
@@ -127,8 +137,8 @@ pub struct OpenSave {
     pub currencies_error: Option<String>,
     /// Every inventory the player state carries, in file order.
     pub inventories: Vec<Inventory>,
-    /// How many ids each known-item list holds, when the list exists.
-    pub known: Vec<(KnownList, usize)>,
+    /// The known-item lists the player state carries, with their ids.
+    pub known: Vec<KnownEntry>,
 }
 
 impl OpenSave {
@@ -155,7 +165,12 @@ impl OpenSave {
         self.inventories = self.bundle.inventories();
         self.known = KnownList::ALL
             .into_iter()
-            .filter_map(|list| self.bundle.known(list).ok().map(|ids| (list, ids.len())))
+            .filter_map(|list| {
+                self.bundle.known(list).ok().map(|mut ids| {
+                    ids.sort_by_key(|id| id.to_ascii_lowercase());
+                    KnownEntry { list, ids }
+                })
+            })
             .collect();
     }
 }
@@ -269,7 +284,12 @@ impl Session {
                 };
                 let known = KnownList::ALL
                     .into_iter()
-                    .filter_map(|list| bundle.known(list).ok().map(|ids| (list, ids.len())))
+                    .filter_map(|list| {
+                        bundle.known(list).ok().map(|mut ids| {
+                            ids.sort_by_key(|id| id.to_ascii_lowercase());
+                            KnownEntry { list, ids }
+                        })
+                    })
                     .collect();
                 Some(OpenSave {
                     entry,
@@ -456,6 +476,32 @@ impl Session {
         Ok(format!("{label}: {} -> {}", compact(&before), compact(&value)))
     }
 
+    /// Stage an addition to a known-item list.
+    pub fn known_add(&mut self, list: KnownList, id: &str) -> Result<String, String> {
+        let id = nms_edit::normalize_id(id.trim());
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let changed = open.bundle.set_known(list, &id, true).map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(if changed {
+            format!("added {id} to {}", list.label())
+        } else {
+            format!("{id} is already in {}", list.label())
+        })
+    }
+
+    /// Stage a removal from a known-item list.
+    pub fn known_remove(&mut self, list: KnownList, id: &str) -> Result<String, String> {
+        let id = nms_edit::normalize_id(id.trim());
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let changed = open.bundle.set_known(list, &id, false).map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(if changed {
+            format!("removed {id} from {}", list.label())
+        } else {
+            format!("{id} is not in {}", list.label())
+        })
+    }
+
     /// Re-read the open slot from disk, throwing away staged edits.
     pub fn reload(&mut self) -> Result<String, String> {
         let path = self
@@ -605,7 +651,7 @@ fn hit(steps: &[RawStep], keys: &KeyMap, value: &Value) -> JsonHit {
 ///
 /// Save keys are ASCII; a non-ASCII needle still matches exact bytes, which is
 /// what a name search needs anyway.
-fn contains_ci(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
@@ -834,9 +880,12 @@ mod tests {
         assert_eq!(open.inventories[0].slots.len(), 1);
         assert_eq!(open.inventories[0].slots[0].id, "^CARBON");
 
-        let known: Vec<(KnownList, usize)> = open.known.clone();
-        assert!(known.contains(&(KnownList::Products, 2)));
-        assert!(known.contains(&(KnownList::Technology, 0)));
+        let known = open.known.clone();
+        let ids = |list: KnownList| -> Option<usize> {
+            known.iter().find(|entry| entry.list == list).map(|entry| entry.ids.len())
+        };
+        assert_eq!(ids(KnownList::Products), Some(2));
+        assert_eq!(ids(KnownList::Technology), Some(0));
     }
 
     #[test]
@@ -1014,6 +1063,45 @@ mod tests {
     }
 
     #[test]
+    fn known_list_edits_stage_and_save() {
+        let scratch = Scratch::new("known");
+        scratch.write("save.hg", SAVE.as_bytes());
+        let mut session = session(&scratch.0);
+        session.select(0);
+
+        let products = |session: &Session| -> Vec<String> {
+            session
+                .open
+                .as_ref()
+                .expect("open")
+                .known
+                .iter()
+                .find(|entry| entry.list == KnownList::Products)
+                .map(|entry| entry.ids.clone())
+                .expect("the products list")
+        };
+        assert_eq!(products(&session), ["^A", "^B"], "ids are sorted for display");
+
+        let report = session.known_add(KnownList::Products, "carbon").expect("stage an addition");
+        assert!(report.contains("added ^CARBON"), "{report}");
+        assert!(session.dirty());
+        assert_eq!(products(&session), ["^A", "^B", "^CARBON"]);
+
+        // Adding again is a no-op, case-insensitively, like the edit layer.
+        let report = session.known_add(KnownList::Products, "^carbon").expect("no-op");
+        assert!(report.contains("already"), "{report}");
+
+        let report = session.known_remove(KnownList::Products, "^A").expect("stage a removal");
+        assert!(report.contains("removed ^A"), "{report}");
+        assert_eq!(products(&session), ["^B", "^CARBON"]);
+
+        session.save().expect("save the edits");
+        session.reload().expect("reload");
+        assert_eq!(products(&session), ["^B", "^CARBON"]);
+        assert!(!session.dirty());
+    }
+
+    #[test]
     fn a_refused_json_edit_leaves_the_save_clean() {
         let scratch = Scratch::new("json-refused");
         scratch.write("save.hg", SAVE.as_bytes());
@@ -1167,6 +1255,23 @@ mod tests {
         // Move units by one; any value is legal as long as it differs.
         let target = if before == 0 { 1 } else { before - 1 };
         session.set_currency(Currency::Units, target).expect("stage the balance");
+
+        // A known-item list round-trips too, on a real save with real lists.
+        let list = KnownList::Products;
+        let id = nms_edit::normalize_id("^NMSEDIT_TEST");
+        let products = |session: &Session| -> Vec<String> {
+            session
+                .open
+                .as_ref()
+                .expect("open")
+                .known
+                .iter()
+                .find(|entry| entry.list == list)
+                .map(|entry| entry.ids.clone())
+                .expect("the products list")
+        };
+        assert!(!products(&session).contains(&id), "{id} must not already be known");
+        session.known_add(list, &id).expect("stage a known id");
         assert!(session.dirty());
         let report = session.save().expect("save the staged balance");
         assert!(report.contains("wrote"), "{report}");
@@ -1178,5 +1283,6 @@ mod tests {
         assert_eq!(open.currencies.expect("currencies").units, target);
         assert!(open.entry.summary.is_some(), "the refreshed metadata still decrypts");
         assert!(!open.inventories.is_empty(), "the inventories still load after a save");
+        assert!(products(&session).contains(&id), "the known id survived the round trip");
     }
 }

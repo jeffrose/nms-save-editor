@@ -17,17 +17,20 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, RichText, ScrollArea, Sense, Stroke, StrokeKind, Vec2,
 };
 use nms_data::DataPack;
-use nms_edit::{Cell, Currency, Inventory, InventoryRole, ItemKind, ItemSlot};
+use nms_edit::{Cell, Currency, Inventory, InventoryRole, ItemKind, ItemSlot, KnownList};
 use nms_model::{describe_raw_path, KeyMap, RawStep};
 use serde_json::Value;
 
-use crate::session::{format_duration, json_summary, JsonHit, OpenSave, Session, JSON_HIT_LIMIT};
+use crate::session::{
+    contains_ci, format_duration, json_summary, JsonHit, OpenSave, Session, JSON_HIT_LIMIT,
+};
 
 /// Which part of a save the central panel is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Overview,
     Inventories,
+    Known,
     Json,
 }
 
@@ -142,6 +145,44 @@ impl EditState {
     }
 }
 
+/// The known-items tab's controls.
+struct KnownState {
+    /// Which of the five lists is shown.
+    list: KnownList,
+    /// Filter over id and item name.
+    filter: String,
+    /// Id of the row the remove button applies to.
+    selected: Option<String>,
+    /// Text of the add box.
+    add_id: String,
+}
+
+impl Default for KnownState {
+    fn default() -> Self {
+        KnownState { list: KnownList::Products, filter: String::new(), selected: None, add_id: String::new() }
+    }
+}
+
+impl KnownState {
+    /// Drop a selection that the document no longer holds, and fall back to a
+    /// list that exists.
+    fn sync(&mut self, open: &OpenSave) {
+        if !open.known.iter().any(|entry| entry.list == self.list) {
+            if let Some(first) = open.known.first() {
+                self.list = first.list;
+            }
+        }
+        let present = open.known.iter().find(|entry| entry.list == self.list).map(|entry| &entry.ids);
+        let still_there = self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| present.is_some_and(|ids| ids.iter().any(|id| id == selected)));
+        if !still_there {
+            self.selected = None;
+        }
+    }
+}
+
 /// An edit the drawing code asked for, applied after the frame is drawn so the
 /// window never holds a borrow of the save while changing it.
 enum Action {
@@ -177,6 +218,18 @@ enum Action {
         steps: Vec<RawStep>,
         value: Value,
     },
+    /// Add an id to a known-item list.
+    KnownAdd {
+        list: KnownList,
+        id: String,
+    },
+    /// Remove an id from a known-item list.
+    KnownRemove {
+        list: KnownList,
+        id: String,
+    },
+    /// Switch to the known-items tab showing one list.
+    OpenKnownList(KnownList),
     Save,
     Discard,
 }
@@ -312,6 +365,7 @@ pub struct EditorApp {
     tab: Tab,
     path_input: String,
     edit: EditState,
+    known: KnownState,
     json: JsonState,
     /// Last message shown in the bottom bar.
     status: Option<String>,
@@ -337,6 +391,7 @@ impl EditorApp {
             session,
             tab: Tab::Overview,
             edit: EditState::default(),
+            known: KnownState::default(),
             json: JsonState::default(),
             status: None,
             pending_switch: None,
@@ -379,6 +434,7 @@ impl EditorApp {
     fn sync_edit(&mut self) {
         if let Some(open) = self.session.open.as_ref() {
             self.edit.sync(open);
+            self.known.sync(open);
             self.json.sync(open);
         }
     }
@@ -403,6 +459,13 @@ impl EditorApp {
             }
             Action::Move { inventory, position, cell } => self.session.move_item(inventory, position, cell),
             Action::SetField { steps, value } => self.session.set_field(&steps, value),
+            Action::KnownAdd { list, id } => self.session.known_add(list, &id),
+            Action::KnownRemove { list, id } => self.session.known_remove(list, &id),
+            Action::OpenKnownList(list) => {
+                self.known.list = list;
+                self.tab = Tab::Known;
+                Ok(format!("editing {}", list.label()))
+            }
             Action::Save => {
                 self.edit.moving = None;
                 self.session.save()
@@ -435,6 +498,7 @@ impl EditorApp {
     fn load_folder(&mut self, path: PathBuf) {
         self.session = Session::open_dir(&path);
         self.edit = EditState::default();
+        self.known = KnownState::default();
         self.json = JsonState::default();
         self.tab = Tab::Overview;
         self.status = self.session.error.clone();
@@ -546,6 +610,9 @@ impl EditorApp {
                 if ui.selectable_label(self.tab == Tab::Inventories, "Inventories").clicked() {
                     self.tab = Tab::Inventories;
                 }
+                if ui.selectable_label(self.tab == Tab::Known, "Known items").clicked() {
+                    self.tab = Tab::Known;
+                }
                 if ui.selectable_label(self.tab == Tab::Json, "JSON").clicked() {
                     self.tab = Tab::Json;
                 }
@@ -565,6 +632,9 @@ impl EditorApp {
                     editable,
                     self.session.pack.as_ref(),
                 ),
+                Tab::Known => {
+                    known_tab(ui, open, &mut self.known, editable, self.session.pack.as_ref())
+                }
                 Tab::Json => json_tab(ui, &self.session, &mut self.json, editable),
             };
         });
@@ -822,9 +892,14 @@ fn overview(ui: &mut egui::Ui, open: &OpenSave, edit: &mut EditState, editable: 
         ui.label(RichText::new("this save has no known-item lists").weak());
     } else {
         egui::Grid::new("known").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
-            for (list, count) in &open.known {
-                ui.label(list.label());
-                ui.label(RichText::new(count.to_string()).strong());
+            for entry in &open.known {
+                ui.label(entry.list.label());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(entry.ids.len().to_string()).strong());
+                    if editable && ui.button("edit").clicked() {
+                        action = Some(Action::OpenKnownList(entry.list));
+                    }
+                });
                 ui.end_row();
             }
         });
@@ -1185,6 +1260,118 @@ fn slot_details(
             action = Some(Action::Remove { inventory: edit.selected_inventory, position: slot.position });
         }
     });
+    action
+}
+
+/// The known-items tab: the five learned-id lists, with add and remove.
+///
+/// The lists are long (1,478 products on the sampled save), so the rows are
+/// drawn with a virtualised scroll area and filtered by id or item name.
+fn known_tab(
+    ui: &mut egui::Ui,
+    open: &OpenSave,
+    state: &mut KnownState,
+    editable: bool,
+    pack: Option<&DataPack>,
+) -> Option<Action> {
+    if open.known.is_empty() {
+        ui.add_space(16.0);
+        ui.label("This save has no readable known-item lists.");
+        return None;
+    }
+
+    let mut action = None;
+    egui::SidePanel::left("known-lists").resizable(true).default_width(220.0).show_inside(ui, |ui| {
+        ui.label(RichText::new("LISTS").small().strong());
+        ui.add_space(4.0);
+        for entry in &open.known {
+            let text = format!("{}  ({})", entry.list.label(), entry.ids.len());
+            if ui.selectable_label(state.list == entry.list, text).clicked() && state.list != entry.list {
+                state.list = entry.list;
+                state.selected = None;
+            }
+        }
+    });
+
+    let Some(entry) = open.known.iter().find(|entry| entry.list == state.list).or_else(|| open.known.first())
+    else {
+        return None;
+    };
+    state.list = entry.list;
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.heading(entry.list.label());
+        ui.label(RichText::new(format!("{} ids", entry.ids.len())).weak());
+    });
+    ui.add_space(4.0);
+
+    if editable {
+        ui.horizontal(|ui| {
+            ui.label("Add");
+            ui.add(
+                egui::TextEdit::singleline(&mut state.add_id)
+                    .hint_text("^CARBON")
+                    .desired_width(200.0),
+            );
+            let id = state.add_id.trim().to_string();
+            if ui.add_enabled(!id.is_empty(), egui::Button::new("Add")).clicked() {
+                action = Some(Action::KnownAdd { list: entry.list, id });
+            }
+        });
+    }
+
+    ui.horizontal(|ui| {
+        ui.label("Filter");
+        ui.add(egui::TextEdit::singleline(&mut state.filter).desired_width(240.0));
+        let removable = editable && state.selected.is_some();
+        if ui.add_enabled(removable, egui::Button::new("Remove selected")).clicked() {
+            if let Some(id) = state.selected.clone() {
+                action = Some(Action::KnownRemove { list: entry.list, id });
+            }
+        }
+        if let Some(selected) = &state.selected {
+            ui.label(RichText::new(selected).small().weak());
+        }
+    });
+    ui.add_space(4.0);
+
+    let needle = state.filter.trim().to_ascii_lowercase();
+    let visible: Vec<&String> = entry
+        .ids
+        .iter()
+        .filter(|id| {
+            if needle.is_empty() {
+                return true;
+            }
+            // A row shows the id and (when a data pack is loaded) the item
+            // name, so both are worth searching.
+            let name = pack.and_then(|pack| pack.item_name(id));
+            contains_ci(id, &needle) || name.is_some_and(|name| contains_ci(&name, &needle))
+        })
+        .collect();
+    if !needle.is_empty() && visible.len() != entry.ids.len() {
+        ui.label(RichText::new(format!("{} of {} shown", visible.len(), entry.ids.len())).small().weak());
+    }
+
+    // The virtualised list needs a uniform row height; take it from the theme
+    // so a different text size or zoom cannot make rows overlap.
+    let row_height = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+    egui::ScrollArea::vertical()
+        .id_salt("known-ids")
+        .auto_shrink([false, false])
+        .show_rows(ui, row_height, visible.len(), |ui, range| {
+            for index in range {
+                let id = visible[index];
+                let name = pack.and_then(|pack| pack.item_name(id)).unwrap_or_default();
+                let text = if name.is_empty() { id.clone() } else { format!("{id}   {name}") };
+                let response = ui.selectable_label(state.selected.as_deref() == Some(id.as_str()), text);
+                if response.clicked() {
+                    state.selected = Some(id.clone());
+                }
+                response.on_hover_text(id);
+            }
+        });
     action
 }
 
@@ -1616,6 +1803,45 @@ mod tests {
         let mut app = EditorApp::from_session(Session::empty());
         let text = drawn_text(&mut app);
         assert!(text.contains("No save open"), "expected the empty-state hint:\n{text}");
+    }
+
+    #[test]
+    fn the_known_tab_lists_and_stages_edits() {
+        let dir = scratch("known-tab");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Known;
+
+        let text = drawn_text(&mut app);
+        for expected in ["LISTS", "products", "Add", "Filter", "Remove selected", "^A"] {
+            assert!(text.contains(expected), "the known tab should draw {expected:?}:\n{text}");
+        }
+
+        app.apply(Action::KnownAdd { list: KnownList::Products, id: "^NEW".to_string() });
+        assert!(app.session.dirty());
+        let text = drawn_text(&mut app);
+        assert!(text.contains("^NEW"), "the added id should appear in the list:\n{text}");
+
+        app.apply(Action::KnownRemove { list: KnownList::Products, id: "^A".to_string() });
+        let ids = &app
+            .session
+            .open
+            .as_ref()
+            .expect("open")
+            .known
+            .iter()
+            .find(|entry| entry.list == KnownList::Products)
+            .expect("products")
+            .ids;
+        assert!(!ids.iter().any(|id| id == "^A"), "the removed id is gone: {ids:?}");
+        assert!(ids.iter().any(|id| id == "^NEW"));
+
+        // The overview's edit buttons jump straight to the list they name.
+        app.apply(Action::OpenKnownList(KnownList::Technology));
+        assert_eq!(app.tab, Tab::Known);
+        assert_eq!(app.known.list, KnownList::Technology);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
