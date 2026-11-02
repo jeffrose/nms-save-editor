@@ -121,22 +121,6 @@ pub struct BackupSummary {
 /// How many archives to keep per save; the same limit the CLI uses.
 pub const BACKUP_KEEP: usize = 10;
 
-/// Refuse a path inside a live, cloud-synced save tree.
-///
-/// Every write the window makes goes through here, so the rule is stated once:
-/// the guard applies to backups too, because deleting or renaming one changes
-/// the folder Steam Cloud syncs.
-fn ensure_writable(path: &Path) -> Result<(), String> {
-    match live_save_location(path) {
-        None => Ok(()),
-        Some(live) => Err(format!(
-            "refusing to write: {} is {}. Copy the folder and open the copy.",
-            path.display(),
-            live.describe()
-        )),
-    }
-}
-
 /// The folder a save's backups live in.
 ///
 /// The CLI's `--backup-dir` defaults to the same place, so both tools share
@@ -579,7 +563,6 @@ impl Session {
 
     /// Pin an archive against pruning, or unpin it.
     pub fn pin_backup(&mut self, archive: &Path, pinned: bool) -> Result<String, String> {
-        ensure_writable(archive)?;
         let store = BackupStore::new(backup_root(archive), BACKUP_KEEP);
         let moved = store.set_kept(archive, pinned).map_err(|error| error.to_string())?;
         let name = moved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
@@ -588,7 +571,6 @@ impl Session {
 
     /// Delete one archive.
     pub fn delete_backup(&mut self, archive: &Path) -> Result<String, String> {
-        ensure_writable(archive)?;
         let store = BackupStore::new(backup_root(archive), BACKUP_KEEP);
         store.delete(archive).map_err(|error| error.to_string())?;
         let name = archive.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
@@ -597,14 +579,13 @@ impl Session {
 
     /// Restore a backup archive over the open save.
     ///
-    /// A live save folder is refused, like every other write. The files being
-    /// replaced are archived first (under the `pre-restore` label), so a
-    /// restore is itself undoable; the open save is re-read afterwards.
+    /// The files being replaced are archived first (under the `pre-restore`
+    /// label), so a restore is itself undoable; the open save is re-read
+    /// afterwards.
     pub fn restore_backup(&mut self, archive: &Path) -> Result<String, String> {
         let (path, folder) = {
             let open = self.open.as_ref().ok_or_else(|| "no save is open".to_string())?;
             let path = open.entry.data_path.clone();
-            ensure_writable(&path)?;
             let folder = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
             (path, folder)
         };
@@ -645,29 +626,22 @@ impl Session {
 
     /// Write staged edits through the edit layer: backup, data file, metadata.
     ///
-    /// A live save folder is refused outright. The CLI can be told to override
-    /// that, but the window deliberately has no such switch yet: the safe path
-    /// is to copy the folder and open the copy.
+    /// The game's own folder is written like any other: the banner above the
+    /// overview and the status bar are what say where the write landed, and
+    /// every write takes a timestamped backup first.
     pub fn save(&mut self) -> Result<String, String> {
         let (path, backup_root) = {
             let open = self.open.as_ref().ok_or_else(|| "no save is open".to_string())?;
             let path = open.entry.data_path.clone();
-            if let Some(live) = live_save_location(&path) {
-                return Err(format!(
-                    "refusing to write: {} is {}. Copy the folder and open the copy.",
-                    path.display(),
-                    live.describe()
-                ));
-            }
             let root = backup_root(&path);
-            (path, root)        };
+            (path, root)
+        };
 
         let options = CommitOptions {
             backup_root: Some(backup_root),
             keep_backups: BACKUP_KEEP,
             timestamp: Some(now_unix()),
             dry_run: false,
-            confirm_live: false,
         };
         let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
         let report = open.bundle.commit(&options).map_err(|error| error.to_string())?;
@@ -1090,7 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_folder_is_refused_by_the_window() {
+    fn a_live_folder_is_editable_and_reported() {
         let scratch = Scratch::new("live");
         let live = scratch
             .0
@@ -1100,22 +1074,18 @@ mod tests {
 
         let mut session = session(&live);
         session.select(0);
-        assert!(session.live_location().is_some(), "the path classifies as a live save folder");
+        // The window still says where it is writing: the banner and the status
+        // bar both hang off this.
+        let live_kind = session.live_location().expect("the path classifies as a live save folder");
+        assert!(live_kind.describe().contains("Steam"), "{}", live_kind.describe());
 
-        session.set_currency(Currency::Units, 5).expect("staging stays in memory");
-        assert!(session.dirty());
-        let error = session.save().expect_err("the window refuses to write a live folder");
-        assert!(error.contains("refusing to write"), "{error}");
+        session.set_currency(Currency::Units, 5).expect("stage");
+        let report = session.save().expect("a live folder is written like any other");
+        assert!(report.contains("wrote"), "{report}");
+        assert!(report.contains("backup"), "the write is backed up: {report}");
 
-        // Restoring is a write too, so it is refused the same way.
-        let error = session
-            .restore_backup(Path::new("/nonexistent/save_20260101_000000.zip"))
-            .expect_err("the window refuses to restore into a live folder");
-        assert!(error.contains("refusing to write"), "{error}");
-
-        // The file on disk still holds the original balance.
         let on_disk = SaveBundle::load(&live.join("save.hg"), KeyMap::builtin()).expect("reload");
-        assert_eq!(on_disk.currencies().expect("currencies").units, 1200);
+        assert_eq!(on_disk.currencies().expect("currencies").units, 5);
     }
 
     #[test]

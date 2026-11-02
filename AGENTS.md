@@ -37,10 +37,14 @@ Work on copies instead:
 * `fixtures/` holds real saves for reading; tests copy them to temp directories.
 * `tools/sandbox-test.sh` runs the game against a throwaway prefix and declares
   that tree a scratch copy with a `.nmsedit-sandbox` marker.
-* The edit layer refuses a live location unless `confirm_live` /
-  `--confirm-live` is passed (`crates/nms-edit/src/safety.rs`). Do not pass it
-  without asking the user first.
-* This rule relaxes only when the user says we have enough confidence.
+* **The live-folder guard was dropped on 2026-11-02, at the user's explicit
+  request**, once every write took a timestamped backup and verified its own
+  planned bytes before touching the disk. Writes to the game's folder now go
+  through; `nms_edit::live_notice` still classifies the path so the CLI, the
+  GUI and the MCP server can say out loud that Steam Cloud will sync it.
+* Be careful with tests anyway: they must not edit the real save folder. Use
+  `fixtures/` copies or `tools/sandbox-test.sh`, which marks its throwaway
+  prefix with `.nmsedit-sandbox`.
 
 ## The invariant that must not break
 
@@ -67,9 +71,9 @@ Two more rules the code enforces, not just documents:
   parses its own planned bytes and refuses to write if they do not read back.
   Do not add a path to disk that skips it — it is the only thing standing
   between an encoder bug and a save the game cannot open.
-* **Backups are a write too.** Pinning, deleting or restoring an archive goes
-  through `check_write`, so the live-folder guard covers them; the CLI's
-  `backups --pin/--remove`, the GUI's buttons and the MCP tools all agree.
+* **Backups are not optional in practice.** The CLI, the GUI and the MCP server
+  all pass a `backup_root`, so every write has a restore point; keep it that
+  way when adding a caller.
 
 ## Conventions
 

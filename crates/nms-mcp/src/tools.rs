@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use nms_edit::{
-    now_unix, normalize_id, BackupStore, CommitOptions, Currency, EditError, Inventory, ItemKind, KnownList,
-    NewItem, SaveBundle,
+    now_unix, normalize_id, BackupStore, CommitOptions, Currency, Inventory, ItemKind, KnownList, NewItem,
+    SaveBundle,
 };
 use serde_json::{json, Value};
 
@@ -108,7 +108,6 @@ pub fn definitions() -> Vec<Value> {
                 "save": save_prop(),
                 "currency": enum_prop("Which balance", &["units", "nanites", "quicksilver"]),
                 "value": integer_prop("The number the game shows, 0 to 4294967295"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "currency", "value"],
         ),
@@ -123,7 +122,6 @@ pub fn definitions() -> Vec<Value> {
                 "amount": integer_prop("How many to add"),
                 "kind": enum_prop("Item kind; from the save when omitted", &["product", "substance", "technology"]),
                 "max_amount": integer_prop("Stack size to write; from the save when omitted"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "inventory", "id", "amount"],
         ),
@@ -135,7 +133,6 @@ pub fn definitions() -> Vec<Value> {
                 "inventory": string_prop("Inventory name from list_inventories"),
                 "slot": integer_prop("Position in the inventory's slot array, from read_inventory"),
                 "amount": integer_prop("The new amount"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "inventory", "slot", "amount"],
         ),
@@ -146,7 +143,6 @@ pub fn definitions() -> Vec<Value> {
                 "save": save_prop(),
                 "inventory": string_prop("Inventory name from list_inventories"),
                 "slot": integer_prop("Position in the inventory's slot array, from read_inventory"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "inventory", "slot"],
         ),
@@ -155,7 +151,6 @@ pub fn definitions() -> Vec<Value> {
             "Repair every damaged slot in the player's inventories and commit.",
             json!({
                 "save": save_prop(),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save"],
         ),
@@ -167,7 +162,6 @@ pub fn definitions() -> Vec<Value> {
                 "save": save_prop(),
                 "list": string_prop("products, technology, specials, base-parts or refiner-recipes"),
                 "id": string_prop("Item id such as ^UP_SCAN"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "list", "id"],
         ),
@@ -178,7 +172,6 @@ pub fn definitions() -> Vec<Value> {
                 "save": save_prop(),
                 "list": string_prop("products, technology, specials, base-parts or refiner-recipes"),
                 "id": string_prop("Item id"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "list", "id"],
         ),
@@ -192,7 +185,6 @@ pub fn definitions() -> Vec<Value> {
                 "path": string_prop("Dotted field path"),
                 "value": { "description": "The new value: JSON, or plain text for a string" },
                 "create": bool_prop("Allow the field to be created when it does not exist (default false)"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "path", "value"],
         ),
@@ -205,7 +197,6 @@ pub fn definitions() -> Vec<Value> {
                 "save": save_prop(),
                 "archive": string_prop("Archive path, or a file name from list_backups"),
                 "pinned": bool_prop("True pins it (the default), false unpins it"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "archive"],
         ),
@@ -215,7 +206,6 @@ pub fn definitions() -> Vec<Value> {
             json!({
                 "save": save_prop(),
                 "archive": string_prop("Archive path, or a file name from list_backups"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "archive"],
         ),
@@ -227,7 +217,6 @@ pub fn definitions() -> Vec<Value> {
             json!({
                 "save": save_prop(),
                 "archive": string_prop("Archive path, or a file name from list_backups"),
-                "confirm_live": confirm_live_prop(),
             }),
             &["save", "archive"],
         ),
@@ -298,17 +287,6 @@ fn save_prop() -> Value {
     string_prop("Path to a save file (save.hg, save2.hg, ...)")
 }
 
-/// The parameter that turns off the live-folder guard.
-///
-/// It is described the same way on every write tool: an agent should only pass
-/// it when the user asked for the live folder by name.
-fn confirm_live_prop() -> Value {
-    bool_prop(
-        "Must be true to write to the game's live, Steam Cloud-synced save folder. Only set it when the \
-         user has explicitly asked to edit the live folder.",
-    )
-}
-
 // ---------------------------------------------------------------------------
 // argument helpers
 // ---------------------------------------------------------------------------
@@ -362,10 +340,6 @@ fn arg_u32(args: &Args, name: &str) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| format!("{name} must be 0..={}", u32::MAX))
 }
 
-fn confirm_live(args: &Args) -> bool {
-    args.get("confirm_live").and_then(Value::as_bool).unwrap_or(false)
-}
-
 fn arg_bool(args: &Args, name: &str, default: bool) -> bool {
     args.get(name).and_then(Value::as_bool).unwrap_or(default)
 }
@@ -399,7 +373,6 @@ fn ensure_mapping(server: &Server) -> Result<(), String> {
 fn edit_and_commit(
     server: &Server,
     save: &str,
-    confirm_live: bool,
     edit: impl FnOnce(&mut SaveBundle) -> Result<String, String>,
 ) -> Result<String, String> {
     let path = PathBuf::from(save);
@@ -409,24 +382,13 @@ fn edit_and_commit(
         return Ok(format!("{summary}\nnothing changed; the file was not rewritten"));
     }
 
-    let live = nms_edit::live_save_location(&path);
     let options = CommitOptions {
         backup_root: Some(backup_root(&path)),
         keep_backups: 10,
         timestamp: Some(now_unix()),
         dry_run: false,
-        confirm_live,
     };
-    let report = match bundle.commit(&options) {
-        Ok(report) => report,
-        Err(EditError::LiveSave(located)) => {
-            return Err(format!(
-                "{located}\npass confirm_live=true to write there anyway — and only when the user has \
-                 explicitly asked to edit the game's own folder."
-            ))
-        }
-        Err(error) => return Err(error.to_string()),
-    };
+    let report = bundle.commit(&options).map_err(|error| error.to_string())?;
 
     let mut out = summary;
     if !report.changes.fields_changed.is_empty() {
@@ -449,8 +411,10 @@ fn edit_and_commit(
     for warning in &report.warnings {
         out.push_str(&format!("\nwarning: {warning}"));
     }
-    if let Some(live) = live {
-        out.push_str(&format!("\nnote: {} is {}; {}", path.display(), live.describe(), live.hazard()));
+    // A write into the game's own folder syncs through Steam Cloud: the model
+    // should say so, because the backup is only on this machine.
+    if let Some(notice) = nms_edit::live_notice(&path) {
+        out.push_str(&format!("\nnote: {notice}"));
     }
     Ok(out)
 }
@@ -758,7 +722,7 @@ fn set_currency(server: &Server, args: &Args) -> Result<String, String> {
     let currency = Currency::parse(&name)
         .ok_or_else(|| format!("unknown currency {name:?}; one of: units, nanites, quicksilver"))?;
     let value = arg_u32(args, "value")?;
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let before = bundle.currencies().map_err(|error| error.to_string())?.get(currency);
         bundle.set_currency(currency, value).map_err(|error| error.to_string())?;
         Ok(format!("{}: {before} -> {value}", currency.label()))
@@ -779,7 +743,7 @@ fn add_item(server: &Server, args: &Args) -> Result<String, String> {
         None => None,
     };
     let max_amount = arg_opt_i64(args, "max_amount")?;
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let inventory = inventory_or_error(bundle, &inventory_name)?;
         let mut item = NewItem::new(id.trim(), amount);
         item.kind = kind;
@@ -802,7 +766,7 @@ fn set_item_amount(server: &Server, args: &Args) -> Result<String, String> {
     let inventory_name = arg_str(args, "inventory")?;
     let index = arg_usize(args, "slot")?;
     let amount = arg_i64(args, "amount")?;
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let inventory = inventory_or_error(bundle, &inventory_name)?;
         let slot = bundle.set_amount(&inventory.path, index, amount).map_err(|error| error.to_string())?;
         Ok(format!("{}[{}]: amount set to {amount} ({})", inventory.path.label(), index, slot.id))
@@ -814,7 +778,7 @@ fn remove_item(server: &Server, args: &Args) -> Result<String, String> {
     let save = arg_str(args, "save")?;
     let inventory_name = arg_str(args, "inventory")?;
     let index = arg_usize(args, "slot")?;
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let inventory = inventory_or_error(bundle, &inventory_name)?;
         let slot = bundle.remove_item(&inventory.path, index).map_err(|error| error.to_string())?;
         Ok(format!(
@@ -830,7 +794,7 @@ fn remove_item(server: &Server, args: &Args) -> Result<String, String> {
 fn repair_all(server: &Server, args: &Args) -> Result<String, String> {
     ensure_mapping(server)?;
     let save = arg_str(args, "save")?;
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let repaired = bundle.repair_all().map_err(|error| error.to_string())?;
         Ok(format!("repaired {repaired} damaged slot(s)"))
     })
@@ -841,7 +805,7 @@ fn known_edit(server: &Server, args: &Args, add: bool) -> Result<String, String>
     let save = arg_str(args, "save")?;
     let list = known_list(args)?;
     let id = arg_str(args, "id")?;
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let changed = bundle.set_known(list, &id, add).map_err(|error| error.to_string())?;
         let id = normalize_id(&id);
         let verb = if add { "added" } else { "removed" };
@@ -871,7 +835,7 @@ fn set_field(server: &Server, args: &Args) -> Result<String, String> {
     };
     let create = arg_bool(args, "create", false);
     let shown = value_text(&value);
-    edit_and_commit(server, &save, confirm_live(args), |bundle| {
+    edit_and_commit(server, &save, |bundle| {
         let before = match bundle.get(&path) {
             Ok(existing) => Some(value_text(existing)),
             Err(_) if create => None,
@@ -894,34 +858,30 @@ fn pin_backup(args: &Args) -> Result<String, String> {
     let save = arg_str(args, "save")?;
     let archive = resolve_archive(&save, &arg_str(args, "archive")?)?;
     let pinned = arg_bool(args, "pinned", true);
-    nms_edit::check_write(&archive, confirm_live(args)).map_err(|located| {
-        format!(
-            "{located}\npass confirm_live=true to change it there anyway — and only when the user has \
-             explicitly asked to edit the game's own folder."
-        )
-    })?;
     let store = BackupStore::new(backup_root(&PathBuf::from(&save)), 10);
     let moved = store.set_kept(&archive, pinned).map_err(|error| error.to_string())?;
     let name = moved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    Ok(format!(
-        "{} {name}\nnote: a pinned archive is never pruned and does not count against the retention limit",
+    let mut out = format!(
+        "{} {name}\na pinned archive is never pruned and does not count against the retention limit",
         if pinned { "pinned" } else { "unpinned" }
-    ))
+    );
+    if let Some(notice) = nms_edit::live_notice(&moved) {
+        out.push_str(&format!("\nnote: {notice}"));
+    }
+    Ok(out)
 }
 
 fn delete_backup(args: &Args) -> Result<String, String> {
     let save = arg_str(args, "save")?;
     let archive = resolve_archive(&save, &arg_str(args, "archive")?)?;
-    nms_edit::check_write(&archive, confirm_live(args)).map_err(|located| {
-        format!(
-            "{located}\npass confirm_live=true to delete it there anyway — and only when the user has \
-             explicitly asked to edit the game's own folder."
-        )
-    })?;
     let store = BackupStore::new(backup_root(&PathBuf::from(&save)), 10);
     store.delete(&archive).map_err(|error| error.to_string())?;
     let name = archive.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    Ok(format!("deleted {name}\nthe save itself is untouched; only the restore point is gone"))
+    let mut out = format!("deleted {name}\nthe save itself is untouched; only the restore point is gone");
+    if let Some(notice) = nms_edit::live_notice(&archive) {
+        out.push_str(&format!("\nnote: {notice}"));
+    }
+    Ok(out)
 }
 
 /// Resolve an archive argument: a path, or a file name inside the save's
@@ -943,26 +903,23 @@ fn restore_backup(server: &Server, args: &Args) -> Result<String, String> {
         .parent()
         .ok_or_else(|| format!("{save} has no folder"))?
         .to_path_buf();
-    nms_edit::check_write(&folder, confirm_live(args)).map_err(|located| {
-        format!(
-            "{located}\npass confirm_live=true to restore there anyway — and only when the user has \
-             explicitly asked to edit the game's own folder."
-        )
-    })?;
-
     let archive_path = resolve_archive(&save, &arg_str(args, "archive")?)?;
 
     let root = backup_root(&save_path);
     let store = BackupStore::new(root.clone(), 10);
     let restored = nms_edit::backup::restore_archive(&archive_path, &folder, &store, now_unix())
         .map_err(|error| error.to_string())?;
-    Ok(format!(
+    let mut out = format!(
         "restored {} file(s) into {} from {}\nprevious contents archived in {}",
         restored.len(),
         folder.display(),
         archive_path.display(),
         root.display()
-    ))
+    );
+    if let Some(notice) = nms_edit::live_notice(&folder) {
+        out.push_str(&format!("\nnote: {notice}"));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1076,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_folder_is_refused_unless_confirmed() {
+    fn a_live_folder_is_written_and_flagged() {
         let scratch = Scratch::new("live");
         let live = scratch.path().join(
             "steamapps/compatdata/275850/pfx/drive_c/users/steamuser/AppData/Roaming/HelloGames/NMS/st_1",
@@ -1087,23 +1044,21 @@ mod tests {
         let server = mapped_server(scratch.path());
         let save = save.display().to_string();
 
-        let refused = call_err(
+        // The write goes through — the owner asked for live editing once every
+        // write was backed up and verified — and the report says the folder is
+        // the one Steam Cloud syncs.
+        let report = call_ok(
             &server,
             "set_currency",
             json!({ "save": save, "currency": "units", "value": 999 }),
         );
-        assert!(refused.contains("Steam"), "{refused}");
-        assert!(refused.contains("confirm_live=true"), "{refused}");
-
-        // With the caller's explicit confirmation the write happens, and the
-        // report says what that means.
-        let report = call_ok(
-            &server,
-            "set_currency",
-            json!({ "save": save, "currency": "units", "value": 999, "confirm_live": true }),
-        );
         assert!(report.contains("units: 1200 -> 999"), "{report}");
         assert!(report.contains("note:"), "{report}");
+        assert!(report.contains("Steam"), "{report}");
+        assert!(report.contains("backup:"), "{report}");
+
+        let read = call_ok(&server, "read_currencies", json!({ "save": save }));
+        assert!(read.contains("\"units\":999"), "{read}");
     }
 
     #[test]

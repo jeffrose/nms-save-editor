@@ -145,12 +145,12 @@ add junk to a save.
 
 The overview also lists the save's backups, written before every save, with a
 restore button that asks first. A restore archives the files it replaces as
-`pre-restore`, so undoing a restore works too, and the GUI refuses to restore
-into a live folder just like it refuses to save there.
+`pre-restore`, so undoing a restore works too.
 
-The window is **read-only over a live save folder**: a path that looks like the
-game's own (or a Steam-managed Proton prefix) cannot be saved to from the GUI,
-and unlike the CLI there is no override. Copy the folder and open the copy.
+Pointed at the game's own folder the window still works, with a standing
+caution: that folder is what Steam Cloud syncs, so an edit there reaches every
+machine signed into the account. Every save backs up first, and the overview's
+backup list is where to go when something looks wrong.
 
 Without a community key mapping the inventory fields fall back to their on-disk
 names, and without a data pack the item names are absent; the window says so in
@@ -190,12 +190,11 @@ takes the same shape: run `nmsedit mcp` and speak JSON-RPC 2.0 over stdio, one
 message per line.
 
 Nothing bypasses the edit layer. Every write takes a timestamped backup first,
-an unedited save is never rewritten, and a live save folder — the one Steam
-Cloud syncs — is refused unless the caller passes `confirm_live`, which the
-tool descriptions tell an agent never to do without the user asking. Point the
-server at a copy with `NMSEDIT_SAVE_DIR` and the guard has nothing to refuse.
-`NMSEDIT_MAPPING` and `NMSEDIT_PACK` select the key mapping and data pack, as
-they do for the CLI and GUI.
+is verified in memory before it touches the disk, and an unedited save is never
+rewritten. Writing into the game's own folder is allowed; the result carries a
+`note:` line saying that folder is the one Steam Cloud syncs, so an agent can
+pass that on instead of hiding it. `NMSEDIT_MAPPING` and `NMSEDIT_PACK` select
+the key mapping and data pack, as they do for the CLI and GUI.
 
 ## Backups
 
@@ -258,11 +257,12 @@ Verified against 62 real files from a live 7.x save set:
    costs nothing.
 8. **Changes are reported by field, not by byte count**
    (`CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha`).
-9. **Live save folders are refused by default.** A path that looks like the
-   game's own save folder (or a Steam-managed Proton prefix) needs an explicit
-   `--confirm-live`, because Steam Cloud would propagate the edit to every
-   machine on the account. Scratch copies marked with `.nmsedit-sandbox` are
-   exempt.
+9. **A write into the game's own folder is called out, not blocked.** The
+   guard that used to refuse those paths was dropped on 2026-11-02, once every
+   write was backed up and verified: the CLI prints a note, the GUI shows a
+   banner, and the MCP server returns one, because Steam Cloud will sync the
+   edit to every machine on the account. Scratch copies marked with
+   `.nmsedit-sandbox` are silent.
 10. **Player-state edits are validated before anything changes.** A full grid, an
    occupied cell, an amount outside the slot or an unknown inventory leaves the
    document clean, so a refused edit cannot cause a file to be rewritten. Adding

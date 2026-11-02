@@ -87,9 +87,6 @@ PATH SYNTAX:
 
 OPTIONS:
     --dry-run              plan an edit without writing anything
-    --confirm-live         accept writing into a live, Steam Cloud-synced save
-                           folder (the edit will sync to every machine on the
-                           account); refused by default
     --backup-dir <dir>     where to write the timestamped zip backup
     --keep <n>             backups to keep per save (default 10)
     --raw                  export/dump the on-disk spelling instead of readable names
@@ -349,14 +346,12 @@ fn commit_and_report(args: &[String], bundle: &mut SaveBundle, data_path: &Path)
         keep_backups: option(args, "--keep").and_then(|v| v.parse().ok()).unwrap_or(10),
         timestamp: Some(now_unix()),
         dry_run,
-        confirm_live: flag(args, "--confirm-live"),
     };
 
-    if let Some(live) = nms_edit::live_save_location(data_path) {
-        if options.confirm_live {
-            println!("note: {} is {}", data_path.display(), live.describe());
-            println!("note: {}", live.hazard());
-        }
+    // A write into the game's own folder syncs through Steam Cloud; say so,
+    // because the backup this command takes is local to this machine.
+    if let Some(notice) = nms_edit::live_notice(data_path) {
+        println!("note: {notice}");
     }
 
     let report = bundle.commit(&options).map_err(|e| e.to_string())?;
@@ -1038,7 +1033,9 @@ fn cmd_restore(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
 
-    nms_edit::check_write(&destination, flag(args, "--confirm-live")).map_err(|e| e.to_string())?;
+    if let Some(notice) = nms_edit::live_notice(&destination) {
+        println!("note: {notice}");
+    }
 
     let store_root = backup_root(args, &destination);
     let store = nms_edit::BackupStore::new(store_root.clone(), 10);

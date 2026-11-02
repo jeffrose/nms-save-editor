@@ -28,7 +28,7 @@ pub use player::{
     Cell, Currencies, Currency, Inventory, InventoryPath, InventoryRole, ItemKind, ItemSlot, KnownList, NewItem,
     PlayerError, StackSize, StackSizeSource, normalize_id,
 };
-pub use safety::{LiveLocation, LiveWrite, SANDBOX_MARKER, check_write, is_sandboxed, live_save_location, mark_sandbox};
+pub use safety::{LiveLocation, SANDBOX_MARKER, is_sandboxed, live_notice, live_save_location, mark_sandbox};
 
 /// Anything that can go wrong while editing a save.
 #[derive(Debug, thiserror::Error)]
@@ -71,14 +71,6 @@ pub enum EditError {
     /// The planned bytes did not read back, so nothing was written.
     #[error("refusing to write: the planned save does not read back ({0})")]
     Verification(String),
-
-    /// A write was aimed at a live, cloud-synced save location without
-    /// confirmation.
-    #[error("refusing to write to {path}: this looks like {kind}\n{hint}",
-        path = .0.path.display(),
-        kind = .0.kind.describe(),
-        hint = .0.hint())]
-    LiveSave(LiveWrite),
 
     /// Filesystem failure.
     #[error("{context}: {source}")]

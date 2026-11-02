@@ -7,9 +7,10 @@
 //! goes through [`crate::session::Session::save`], which writes a timestamped
 //! backup and patches the metadata exactly like the CLI does.
 //!
-//! The window refuses to write to a live, cloud-synced save folder. That is the
-//! same rule the edit layer enforces, and skipping it would put an edit on every
-//! machine signed into the account.
+//! Writes into the game's own folder are allowed — the owner asked for that on
+//! 2026-11-02, once every write was backed up and verified — but the window says
+//! so out loud, because Steam Cloud syncs that folder to every machine signed
+//! into the account.
 
 use std::path::{Path, PathBuf};
 
@@ -449,9 +450,11 @@ impl EditorApp {
 
     /// True when the open save may be edited.
     ///
-    /// A live folder is read-only here; see the module comment.
+    /// That includes the game's own folder: every write is backed up and
+    /// verified, which is what the owner of this machine asked for on
+    /// 2026-11-02. The banner says when a write will sync.
     fn editable(&self) -> bool {
-        self.session.open.is_some() && self.session.live_location().is_none()
+        self.session.open.is_some()
     }
 
     fn sync_edit(&mut self) {
@@ -726,7 +729,7 @@ impl EditorApp {
                 };
                 if live.is_some() {
                     ui.separator();
-                    ui.label(RichText::new("live folder · read-only").small().weak());
+                    ui.label(RichText::new("live folder · syncs via Steam Cloud").small().weak());
                 }
                 if dirty {
                     ui.separator();
@@ -957,8 +960,9 @@ fn live_banner(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     ui.label(
         RichText::new(
-            "This is the game's live save folder, so the window is read-only here. \
-             Copy the folder somewhere else and open the copy to edit it.",
+            "This is the game's own save folder, which Steam Cloud syncs: an edit here reaches \
+             every machine signed into the account. Every save writes a timestamped backup \
+             first, and the overview lists them.",
         )
         .small()
         .color(Color32::from_rgb(200, 140, 90)),

@@ -141,7 +141,6 @@ fn unmodified_save_commits_nothing() {
         keep_backups: 3,
         timestamp: Some(1_793_416_365),
         dry_run: false,
-        confirm_live: false,
     };
     let report = bundle.commit(&options).unwrap();
 
@@ -182,9 +181,6 @@ fn rename_updates_json_and_metadata_and_backs_up() {
         keep_backups: 3,
         timestamp: Some(1_793_488_365),
         dry_run: false,
-        // The fixtures live outside any save folder, but a test must never be
-        // able to write into one by accident either.
-        confirm_live: false,
     };
     let report = bundle.commit(&options).unwrap();
 
@@ -289,15 +285,21 @@ fn small_edit_only_changes_a_few_bytes() {
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
-/// A test must never be able to write into a live save folder by accident, and
-/// the guard must refuse one that is not a declared scratch copy.
+/// A write into a live-looking tree goes through, is backed up, and is
+/// reported as a live location so the caller can say so out loud.
+///
+/// The owner of this machine asked for this on 2026-11-02, once every write had
+/// a backup and a pre-write verification behind it; what remains of the old
+/// refusal is the classification, which [`nms_edit::live_notice`] turns into a
+/// warning line.
 #[test]
-fn commit_refuses_a_live_save_folder() {
+fn a_live_looking_folder_is_written_with_a_backup_and_a_notice() {
     let Some(dir) = account_dir() else {
         eprintln!("skipping: no fixtures");
         return;
     };
     let fake = std::env::temp_dir().join(format!("nms-edit-live-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&fake);
     let live = fake.join("compatdata/275850/pfx/drive_c/users/steamuser/AppData/Roaming/HelloGames/NMS/st_test");
     std::fs::create_dir_all(&live).unwrap();
     let slot = Slot::player_state(1);
@@ -305,27 +307,31 @@ fn commit_refuses_a_live_save_folder() {
     std::fs::copy(dir.join(slot.metadata_file_name()), live.join(slot.metadata_file_name())).unwrap();
 
     let data_path = live.join(slot.data_file_name());
-    let before = std::fs::read(&data_path).unwrap();
     let mut bundle = SaveBundle::load(&data_path, KeyMap::builtin()).unwrap();
-    bundle.set("CommonStateData.SaveName", Value::from("should not be written")).unwrap();
+    bundle.set("CommonStateData.SaveName", Value::from("Written To A Live Tree")).unwrap();
 
-    let refusal = bundle
-        .commit(&CommitOptions { timestamp: Some(1_793_488_365), ..Default::default() })
-        .unwrap_err();
-    let message = refusal.to_string();
-    assert!(message.contains("--confirm-live"), "{message}");
-    assert_eq!(std::fs::read(&data_path).unwrap(), before, "a refused commit must not touch the file");
-
-    // Declaring the tree a scratch copy lets the same commit through.
-    nms_edit::mark_sandbox(&fake).unwrap();
     let report = bundle
-        .commit(&CommitOptions { timestamp: Some(1_793_488_365), ..Default::default() })
+        .commit(&CommitOptions {
+            backup_root: Some(live.join("Save Backups")),
+            timestamp: Some(1_793_488_365),
+            ..Default::default()
+        })
         .unwrap();
-    assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
-    assert_eq!(
-        SaveBundle::load(&data_path, KeyMap::builtin()).unwrap().info().save_name.as_deref(),
-        Some("should not be written")
-    );
+    assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)), "the write happens");
+    let backup = report.backup.expect("a live write still takes a backup");
+    assert!(backup.path.is_file());
+
+    let reloaded = SaveBundle::load(&data_path, KeyMap::builtin()).unwrap();
+    assert_eq!(reloaded.info().save_name.as_deref(), Some("Written To A Live Tree"));
+
+    // The classification that drives the warning is still there...
+    let notice = nms_edit::live_notice(&data_path).expect("a live path is reported");
+    assert!(notice.contains("Steam"), "{notice}");
+
+    // ...and a declared scratch copy is silent, which is how the test harness
+    // avoids a warning on a copied prefix.
+    nms_edit::mark_sandbox(&fake).unwrap();
+    assert_eq!(nms_edit::live_notice(&data_path), None);
 
     let _ = std::fs::remove_dir_all(&fake);
 }
@@ -518,7 +524,6 @@ fn currency_edits_commit_and_round_trip() {
             keep_backups: 3,
             timestamp: Some(1_793_488_365),
             dry_run: false,
-            confirm_live: false,
         })
         .unwrap();
     assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
@@ -603,7 +608,6 @@ fn item_edits_commit_and_reload() {
             keep_backups: 3,
             timestamp: Some(1_793_488_365),
             dry_run: false,
-            confirm_live: false,
         })
         .unwrap();
     assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));
@@ -687,7 +691,6 @@ fn repair_and_move_commit_and_reload() {
             keep_backups: 3,
             timestamp: Some(1_793_488_365),
             dry_run: false,
-            confirm_live: false,
         })
         .unwrap();
     assert!(matches!(report.data, nms_format::WriteOutcome::Written(_)));

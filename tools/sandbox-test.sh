@@ -57,9 +57,9 @@ prepare() {
   account="$(account_name)"
   local save_dir="$SAVE_ROOT/$account"
 
-  # Declare the tree a scratch copy: the edit layer refuses to write into a live
-  # save folder unless it is explicitly confirmed, and this marker is the
-  # standing confirmation for the sandbox.
+  # Declare the tree a scratch copy. The editor writes wherever it is pointed
+  # (since 2026-11-02), but this marker keeps the tools from reporting the
+  # throwaway prefix as the live folder, and marks the tree for humans.
   mkdir -p "$SANDBOX"
   printf 'scratch copy\n' > "$SANDBOX/.nmsedit-sandbox"
 

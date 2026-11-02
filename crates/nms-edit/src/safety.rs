@@ -1,16 +1,16 @@
-//! Guards against editing the wrong copy of a save.
+//! Recognising the game's live save folders.
 //!
 //! On PC, saves live inside a Steam Cloud-synced folder: a change there is
-//! uploaded and lands on every machine signed into the account. That is
-//! exactly the failure mode reported over and over in the older editor's issue
-//! tracker ("it corrupted my save on all my machines"), and it is not
-//! recoverable from inside this process.
+//! uploaded and lands on every machine signed into the account, which is why
+//! the editor used to refuse those paths outright. It no longer does — the
+//! owner of this machine asked for live editing once every write was backed up
+//! (timestamped zip, restorable, pinnable) and verified before it touched the
+//! disk. What remains here is the classification, so each face can say out loud
+//! that a write will sync.
 //!
-//! So the edit layer refuses to write to a location that looks like a live save
-//! folder unless the caller passes [`CommitOptions::confirm_live`]. A directory
-//! tree that declares itself a sandbox with a marker file is exempt, which is
-//! how `tools/sandbox-test.sh` and the test suite work on saved copies without
-//! tripping the guard.
+//! A directory tree that declares itself a scratch copy with a marker file is
+//! never reported as live, which is how `tools/sandbox-test.sh` and the test
+//! suite work inside a copied prefix without a false warning.
 
 use std::path::{Path, PathBuf};
 
@@ -95,50 +95,19 @@ pub fn live_save_location(path: &Path) -> Option<LiveLocation> {
     None
 }
 
-/// A path that must not be written to without explicit confirmation.
-#[derive(Debug, Clone)]
-pub struct LiveWrite {
-    /// The offending path.
-    pub path: PathBuf,
-    /// What kind of live location it is.
-    pub kind: LiveLocation,
-}
-
-impl std::fmt::Display for LiveWrite {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} looks like {}. {}",
-            self.path.display(),
-            self.kind.describe(),
-            self.kind.hazard()
-        )
-    }
-}
-
-impl LiveWrite {
-    /// The hint shown to the user.
-    pub fn hint(&self) -> String {
+/// The caution to show when a write lands in a live save tree.
+///
+/// `None` for ordinary paths and for marked scratch copies. Callers print or
+/// display this rather than deciding for themselves what to say.
+pub fn live_notice(path: &Path) -> Option<String> {
+    live_save_location(path).map(|kind| {
         format!(
-            "{} looks like {}. {}.\n\
-             Take a backup first, then re-run with --confirm-live to accept that Steam Cloud will sync the change.\n\
-             To experiment without touching it, use tools/sandbox-test.sh (an isolated prefix).",
-            self.path.display(),
-            self.kind.describe(),
-            self.kind.hazard()
+            "{} is {}: {}. Every write here is backed up first, and Steam Cloud will sync it.",
+            path.display(),
+            kind.describe(),
+            kind.hazard()
         )
-    }
-}
-
-/// Check a path before writing, honouring an explicit confirmation.
-pub fn check_write(path: &Path, confirmed: bool) -> Result<(), LiveWrite> {
-    if confirmed {
-        return Ok(());
-    }
-    match live_save_location(path) {
-        Some(kind) => Err(LiveWrite { path: path.to_path_buf(), kind }),
-        None => Ok(()),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -186,18 +155,17 @@ mod tests {
         mark_sandbox(&root).unwrap();
         assert!(is_sandboxed(&save));
         assert_eq!(live_save_location(&save), None);
-        assert!(check_write(&save, false).is_ok());
+        assert_eq!(live_notice(&save), None, "a scratch copy is not worth a warning");
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn unconfirmed_writes_are_refused_with_a_useful_hint() {
-        let refusal = check_write(&steam_save(), false).unwrap_err();
-        assert_eq!(refusal.kind, LiveLocation::SteamProtonPrefix);
-        let hint = refusal.hint();
-        assert!(hint.contains("--confirm-live"), "{hint}");
-        assert!(hint.contains("sandbox-test.sh"), "{hint}");
-        assert!(check_write(&steam_save(), true).is_ok());
+    fn a_live_location_gets_a_notice_instead_of_a_refusal() {
+        let notice = live_notice(&steam_save()).expect("a live path is reported");
+        assert!(notice.contains("Steam"), "{notice}");
+        assert!(notice.contains("backed up"), "{notice}");
+        assert!(notice.contains("sync"), "{notice}");
+        assert_eq!(live_notice(Path::new("/tmp/scratch/save13.hg")), None);
     }
 }
