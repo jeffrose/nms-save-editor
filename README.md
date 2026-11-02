@@ -23,7 +23,9 @@ symptoms:
 * **save integrity by construction** instead of by careful clicking;
 * **a data pipeline** that regenerates game text and item names from the
   player's own install, so a game update is a command, not a wait (84,965 strings
-  and 7,640 item names in 137 ms today);
+  and 7,640 item names in 137 ms today) — and the same for the obfuscated field
+  names, which are a hash of the name and can be read straight out of the
+  executable ([how](docs/findings-mapping.md));
 * **automation** — a library, a CLI, and an MCP server so an agent can do the
   clicking (see [MCP](#mcp)).
 
@@ -61,6 +63,7 @@ storage slot    2 (PlayerState1)
 | `nmsedit data info` | show the installed data pack |
 | `nmsedit data lookup <id>` | print game text by id |
 | `nmsedit data item <id>` | print item names by id, with the source of each name |
+| `nmsedit data mapping` | derive the save-key mapping from the game's own executable (field names live in `NMS.exe`; the key is a hash of the name), merging the installed file |
 | `nmsedit currencies <save.hg>` | show units, nanites and quicksilver |
 | `nmsedit currency <save.hg> <name> <value>` | set one balance and commit |
 | `nmsedit inventories <save.hg> [--all]` | list inventories, their grids and roles |
@@ -282,6 +285,7 @@ Verified against 62 real files from a live 7.x save set:
    save itself rather than guessed from a table.
 
 Details and measurements: [`docs/findings-m0.md`](docs/findings-m0.md),
+[`docs/findings-mapping.md`](docs/findings-mapping.md),
 [`docs/findings-m2.md`](docs/findings-m2.md),
 [`docs/findings-m4.md`](docs/findings-m4.md),
 [`docs/format/save-file.md`](docs/format/save-file.md),

@@ -1270,8 +1270,9 @@ fn cmd_data(args: &[String]) -> Result<(), String> {
         Some("info") => cmd_data_info(args),
         Some("lookup") => cmd_data_lookup(args),
         Some("item") => cmd_data_item(args),
+        Some("mapping") => cmd_data_mapping(args),
         Some(other) => Err(format!("unknown data command {other:?}\n\n{USAGE}")),
-        None => Err(format!("missing data command (refresh, info, lookup)\n\n{USAGE}")),
+        None => Err(format!("missing data command (refresh, info, lookup, item, mapping)\n\n{USAGE}")),
     }
 }
 
@@ -1332,6 +1333,73 @@ fn cmd_data_refresh(args: &[String]) -> Result<(), String> {
     println!("pack size       {size} bytes");
     println!("nothing from the game is redistributed: the pack is built from your own install and stays here");
     Ok(())
+}
+
+/// Derive the save-key mapping from the game's own executable.
+///
+/// The readable field names are not in the saves: the game hashes a name into
+/// the three-character key it writes, so the pairs can be rebuilt from the
+/// name tables in `NMS.exe`. An existing mapping file is merged in and wins —
+/// a maintained mapping is never overridden, only extended with keys it lacks.
+fn cmd_data_mapping(args: &[String]) -> Result<(), String> {
+    let install = nms_data::Install::discover(option(args, "--install").map(PathBuf::from).as_deref())
+        .map_err(|error| error.to_string())?;
+    let out = option(args, "--out").map(PathBuf::from).unwrap_or_else(|| {
+        default_mapping_path().unwrap_or_else(|| PathBuf::from("mapping.json"))
+    });
+    let binary = nms_data::find_game_binary(&install.root).map_err(|error| error.to_string())?;
+
+    let existing = read_mapping_pairs(&out);
+    let mapping = nms_data::build_mapping(&install.root, &existing).map_err(|error| error.to_string())?;
+
+    println!("installation    {}", install.root.display());
+    println!("binary          {}", binary.display());
+    println!("names read      {}", mapping.report.names);
+    println!("keys resolved   {} (a name is only kept when its key is unique)", mapping.report.unique_keys);
+    println!("keys dropped    {} (two names hashed to the same key)", mapping.report.ambiguous_keys);
+    if !existing.is_empty() {
+        println!("kept from file  {} entries in {}", existing.len(), out.display());
+        println!(
+            "agreement       {} of {} reproduced by the extraction, {} differ",
+            mapping.report.agreed,
+            existing.len(),
+            mapping.report.differed
+        );
+    }
+    println!("mapping         {} entries", mapping.pairs.len());
+
+    let json = mapping.to_json(&install.root, now_unix());
+    let text = serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?;
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+    std::fs::write(&out, text).map_err(|error| format!("{}: {error}", out.display()))?;
+    println!("wrote           {}", out.display());
+    println!("nothing from the game is redistributed: the mapping names fields, it does not carry game text");
+    Ok(())
+}
+
+/// Read `{"Mapping": [{"Key": ..., "Value": ...}]}`, the shape both the
+/// community file and this generator write.
+fn read_mapping_pairs(path: &Path) -> std::collections::BTreeMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(path) else { return std::collections::BTreeMap::new() };
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return std::collections::BTreeMap::new();
+    };
+    document
+        .get("Mapping")
+        .and_then(|mapping| mapping.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let key = entry.get("Key")?.as_str()?.to_string();
+                    let name = entry.get("Value")?.as_str()?.to_string();
+                    Some((key, name))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn cmd_data_info(args: &[String]) -> Result<(), String> {

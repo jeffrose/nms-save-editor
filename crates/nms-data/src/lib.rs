@@ -25,10 +25,12 @@
 
 pub mod install;
 pub mod items;
+pub mod mapping;
 pub mod language;
 pub mod pack;
 
 pub use install::Install;
+pub use mapping::{Mapping, MappingReport, build_mapping, extract_field_names, find_game_binary, key_for_name};
 pub use items::{ItemIndex, ItemIndexReport, NameSource};
 pub use language::Localisation;
 pub use pack::{BuildReport, DataPack, PACK_FORMAT, SourceReport};
@@ -78,6 +80,13 @@ pub enum DataError {
     Json {
         /// Underlying failure.
         message: String,
+    },
+
+    /// The game's executable was not where the layouts put it.
+    #[error("no game executable found under {root} (looked for Binaries/NMS.exe)")]
+    MissingBinary {
+        /// Installation root that was searched.
+        root: String,
     },
 
     /// Filesystem failure.
