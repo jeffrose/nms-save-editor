@@ -1305,6 +1305,7 @@ dependencies = [
  "nms-data",
  "nms-edit",
  "nms-format",
+ "nms-mcp",
  "nms-model",
  "serde_json",
 ]
@@ -1349,6 +1350,18 @@ dependencies = [
  "nms-format",
  "nms-model",
  "serde_json",
+]
+
+[[package]]
+name = "nms-mcp"
+version = "0.1.0"
+dependencies = [
+ "nms-data",
+ "nms-edit",
+ "nms-format",
+ "nms-model",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

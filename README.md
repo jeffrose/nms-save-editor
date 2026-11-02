@@ -20,7 +20,8 @@ symptoms:
 * **a data pipeline** that regenerates game text and item names from the
   player's own install, so a game update is a command, not a wait (84,965 strings
   and 7,640 item names in 137 ms today);
-* **automation** — a library and a CLI, not only a window.
+* **automation** — a library, a CLI, and an MCP server so an agent can do the
+  clicking (see [MCP](#mcp)).
 
 ## What works today
 
@@ -151,6 +152,47 @@ Without a community key mapping the inventory fields fall back to their on-disk
 names, and without a data pack the item names are absent; the window says so in
 both cases.
 
+## MCP
+
+```sh
+nmsedit mcp        # speaks the Model Context Protocol on stdin/stdout
+```
+
+The same binary is an MCP server, so an agent can answer requests like *"add
+100,000 nanites to my Pioneers save"*: it lists the saves, finds the one named
+Pioneers, resolves what "nanites" means (a balance, not an item), sets it, and
+reports the backup it wrote. Eighteen tools cover the editor: slot listing and
+search, balances, inventories and their slots, item add/remove/set-amount,
+repairs, learned lists, arbitrary fields by path, backups and restore.
+
+Register it with OpenCode (global config, `~/.config/opencode/opencode.json`):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "nmsedit": {
+        "type": "local",
+        "command": ["nmsedit", "mcp"],
+      },
+    },
+  },
+}
+```
+
+or `opencode mcp add nmsedit --global -- nmsedit mcp`. Any other MCP client
+takes the same shape: run `nmsedit mcp` and speak JSON-RPC 2.0 over stdio, one
+message per line.
+
+Nothing bypasses the edit layer. Every write takes a timestamped backup first,
+an unedited save is never rewritten, and a live save folder — the one Steam
+Cloud syncs — is refused unless the caller passes `confirm_live`, which the
+tool descriptions tell an agent never to do without the user asking. Point the
+server at a copy with `NMSEDIT_SAVE_DIR` and the guard has nothing to refuse.
+`NMSEDIT_MAPPING` and `NMSEDIT_PACK` select the key mapping and data pack, as
+they do for the CLI and GUI.
+
 ## Guarantees
 
 Verified against 62 real files from a live 7.x save set:
@@ -200,6 +242,7 @@ crates/nms-pak      HGPAK reader for the game's own .pak archives
 crates/nms-data     regenerates game text from a local installation
 crates/nms-cli      the nmsedit binary
 crates/nms-gui      the nmsedit-gui window (egui/eframe)
+crates/nms-mcp      the MCP server an agent talks to
 docs/format         the format notes this implementation is built from
 tools/              fixture and data-pipeline scripts
 ```
@@ -225,6 +268,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | **M3 (done)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
 | **M4 (done)** | player state: currencies, inventory grids and slots, known-item lists — library and CLI, with the measured invariants in [`docs/format/player-state.md`](docs/format/player-state.md) |
 | **M5 (done)** | GUI (`egui`): slot browser from metadata, save summary, balances, inventory grids, known-item lists, backup history with restore, staged editing, and the JSON view with exact-path editing |
+| **MCP (done)** | `nmsedit mcp`: the editor as an MCP server, so agents read and edit saves through the same backed-up edit layer |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |
 

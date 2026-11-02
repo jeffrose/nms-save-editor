@@ -57,6 +57,13 @@ PLAYER (readable field names need a community key mapping, see --mapping):
     nmsedit known-remove <save.hg> <list> <id>
                                            forget an id
 
+MCP (for agents):
+    nmsedit mcp                          speak the Model Context Protocol on
+                                         stdin/stdout (JSON-RPC 2.0, one message
+                                         per line) so an agent can read and edit
+                                         saves; the mapping and data pack come
+                                         from NMSEDIT_MAPPING and NMSEDIT_PACK
+
 DATA (regenerated from a local game installation):
     nmsedit data refresh                 read the game's archives and write a data pack
     nmsedit data info                    show the installed data pack
@@ -121,6 +128,7 @@ fn main() -> ExitCode {
         Some("known-add") => run(&args, cmd_known_edit),
         Some("known-remove") => run(&args, cmd_known_edit),
         Some("data") => run(&args, cmd_data),
+        Some("mcp") => run(&args, cmd_mcp),
         Some(other) => {
             eprintln!("unknown command {other:?}\n\n{USAGE}");
             ExitCode::from(2)
@@ -1108,6 +1116,20 @@ fn verify_one(name: &str, raw: &[u8]) -> VerifyRow {
 }
 
 /// `nmsedit data ...`
+fn cmd_mcp(_args: &[String]) -> Result<(), String> {
+    // stdout carries the protocol, so nothing else may print there; notes for
+    // a human watching the log go to stderr.
+    let server = nms_mcp::Server::from_config();
+    eprintln!(
+        "nmsedit mcp: ready (mapping: {}, data pack: {})",
+        if server.mapping().is_some() { "loaded" } else { "none" },
+        if server.has_pack() { "loaded" } else { "none" },
+    );
+    let stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    server.run(stdin, &mut stdout).map_err(|error| format!("mcp: {error}"))
+}
+
 fn cmd_data(args: &[String]) -> Result<(), String> {
     match positional(args).first().copied() {
         Some("refresh") => cmd_data_refresh(args),

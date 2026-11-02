@@ -203,6 +203,42 @@ impl DataPack {
         self.items.len()
     }
 
+    /// Every item id and its display name.
+    pub fn items(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.items.iter().map(|(id, name)| (id.as_str(), name.as_str()))
+    }
+
+    /// Items whose name or id matches `query`, best first, at most `limit`.
+    ///
+    /// Names are how people and agents describe an item ("nanites"), ids the
+    /// precise way ("NANITE"); the ranking prefers an exact name, then a name
+    /// prefix, then a name that contains the text, then an id that does.
+    pub fn search_items(&self, query: &str, limit: usize) -> Vec<(&str, &str)> {
+        let needle = query.trim().to_ascii_lowercase();
+        if needle.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let mut hits: Vec<(u8, &str, &str)> = Vec::new();
+        for (id, name) in self.items() {
+            let lower_name = name.to_ascii_lowercase();
+            let rank = if lower_name == needle {
+                0
+            } else if lower_name.starts_with(&needle) {
+                1
+            } else if lower_name.contains(&needle) {
+                2
+            } else if id.to_ascii_lowercase().contains(&needle) {
+                3
+            } else {
+                continue;
+            };
+            hits.push((rank, id, name));
+        }
+        hits.sort_by(|a, b| (a.0, a.2).cmp(&(b.0, b.2)));
+        hits.truncate(limit);
+        hits.into_iter().map(|(_, id, name)| (id, name)).collect()
+    }
+
     /// The category an item belongs to, when it came from an item table.
     pub fn item_category(&self, id: &str) -> Option<&str> {
         self.categories.get(id.trim_start_matches(['^', '!'])).map(String::as_str)
@@ -308,6 +344,35 @@ mod tests {
         assert_eq!(reloaded.lookup("missing"), None);
         assert_eq!(reloaded.game_version.as_deref(), Some("7.11"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn item_search_ranks_names_over_ids() {
+        let mut pack = DataPack {
+            format: PACK_FORMAT,
+            language: "english".into(),
+            game_version: None,
+            generated_at: 0,
+            notes: "test".into(),
+            strings: BTreeMap::new(),
+            items: BTreeMap::new(),
+            categories: BTreeMap::new(),
+        };
+        pack.items.insert("NANITE".into(), "Nanites".into());
+        pack.items.insert("NANITE_CRYSTAL".into(), "Nanite Crystal".into());
+        pack.items.insert("STELLAR_NANITE".into(), "Stellar Nanites".into());
+        pack.items.insert("CARBON".into(), "Carbon".into());
+
+        let hits = pack.search_items("nanite", 10);
+        assert_eq!(
+            hits.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            ["NANITE_CRYSTAL", "NANITE", "STELLAR_NANITE"],
+            "prefix matches come first, then the shortest name, then contains"
+        );
+        assert_eq!(pack.search_items("CARBON", 10), [("CARBON", "Carbon")]);
+        assert!(pack.search_items("nothing here", 10).is_empty());
+        assert!(pack.search_items("nanite", 0).is_empty(), "a zero limit returns nothing");
+        assert_eq!(pack.search_items("nanite", 1).len(), 1);
     }
 
     #[test]
