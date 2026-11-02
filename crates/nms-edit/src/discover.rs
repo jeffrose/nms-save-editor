@@ -93,6 +93,26 @@ pub fn save_dirs(root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// The user-visible game slot (`1..=15`) a storage slot belongs to.
+///
+/// The game keeps **two save points per slot**: `save.hg` and `save2.hg` are
+/// slot 1, `save3.hg` and `save4.hg` are slot 2, and so on. They are separate
+/// states — the game's own load menu offers the slot's last auto save and its
+/// last manual save — not two halves of one file.
+pub fn game_slot(slot: Slot) -> Option<u8> {
+    slot.player_number().map(|number| number.div_ceil(2))
+}
+
+/// The two storage slots of a game slot, lower first.
+pub fn game_slot_files(slot: u8) -> Option<(Slot, Slot)> {
+    if !(1..=15).contains(&slot) {
+        return None;
+    }
+    let first = Slot::player_state_checked(slot * 2 - 1)?;
+    let second = Slot::player_state_checked(slot * 2)?;
+    Some((first, second))
+}
+
 /// How many player saves a folder holds, without reading any of them.
 ///
 /// Used by folder listings: `accountdata.hg`, `usersettings.hg` and the
@@ -143,6 +163,8 @@ pub struct FoundSave {
     pub folder: PathBuf,
     /// The storage slot the file name identifies.
     pub slot: Slot,
+    /// The decrypted metadata file, when it exists and reads.
+    pub metadata: Option<Metadata>,
     /// Path of the data file.
     pub data_path: PathBuf,
     /// Player-chosen save name, when the metadata reads.
@@ -157,6 +179,18 @@ pub struct FoundSave {
     pub version: Option<u32>,
     /// Modification time of the data file, in Unix seconds.
     pub modified_unix: Option<u64>,
+    /// The user-visible game slot (`1..=15`) this save point belongs to.
+    pub game_slot: u8,
+    /// When the game wrote this save point, in Unix seconds: the metadata's
+    /// timestamp, or the file's own modification time when it does not read.
+    pub state_time: Option<u64>,
+    /// Whether this is the newer of its game slot's two save points, which is
+    /// the one the game's load screen shows and loads by default.
+    pub newest: bool,
+    /// The slot's other save point, when it exists.
+    pub paired_path: Option<PathBuf>,
+    /// When the game wrote the other save point.
+    pub paired_time: Option<u64>,
 }
 
 impl FoundSave {
@@ -172,6 +206,11 @@ impl FoundSave {
             "play_time_seconds": self.play_time,
             "version": self.version,
             "modified_unix": self.modified_unix,
+            "game_slot": self.game_slot,
+            "state_unix": self.state_time,
+            "newest_in_slot": self.newest,
+            "paired_file": self.paired_path.as_ref().map(|path| path.display().to_string()),
+            "paired_state_unix": self.paired_time,
         })
     }
 }
@@ -197,24 +236,75 @@ pub fn scan(dir: &Path) -> Vec<FoundSave> {
         let metadata = std::fs::read(dir.join(slot.metadata_file_name()))
             .ok()
             .and_then(|bytes| Metadata::read(&bytes, slot).ok());
+        let modified_unix = std::fs::metadata(&path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|age| age.as_secs());
         saves.push(FoundSave {
             folder: dir.to_path_buf(),
             slot,
+            metadata: metadata.clone(),
             data_path: path.clone(),
             save_name: metadata.as_ref().map(Metadata::save_name).unwrap_or_default(),
             game_mode: metadata.as_ref().map(Metadata::game_mode).unwrap_or_default(),
             location: metadata.as_ref().map(Metadata::location).unwrap_or_default(),
             play_time: metadata.as_ref().map(|metadata| metadata.play_time).unwrap_or(0),
             version: metadata.as_ref().map(|metadata| metadata.version),
-            modified_unix: std::fs::metadata(&path)
-                .and_then(|meta| meta.modified())
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|age| age.as_secs()),
+            modified_unix,
+            game_slot: game_slot(slot).unwrap_or(0),
+            // The metadata timestamp is the game's own "when"; the file's
+            // modification time stands in when the metadata does not read.
+            state_time: metadata.as_ref().and_then(Metadata::timestamp).or(modified_unix),
+            newest: true,
+            paired_path: None,
+            paired_time: None,
         });
     }
     saves.sort_by_key(|save| save.slot.index());
+    pair_save_points(&mut saves);
     saves
+}
+
+/// Mark which of each game slot's two save points is the newer one, and link
+/// the pair to each other.
+///
+/// The newer one is what the game shows on its load screen and loads when the
+/// slot is picked; the older one is the slot's previous state (the game's own
+/// menu calls them the slot's last auto save and last manual save). Nothing in
+/// the file says which is which — the metadata words are identical across a
+/// pair, measured on 15 real pairs — so the timestamp decides.
+fn pair_save_points(saves: &mut [FoundSave]) {
+    let mut newest: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
+    for (index, save) in saves.iter().enumerate() {
+        match newest.get(&save.game_slot).copied() {
+            // Later state time wins; a tie falls to the higher storage slot, so
+            // exactly one file per game slot is ever marked.
+            Some(best)
+                if (saves[best].state_time, saves[best].slot.index())
+                    >= (save.state_time, save.slot.index()) => {}
+            _ => {
+                newest.insert(save.game_slot, index);
+            }
+        }
+    }
+
+    let pairs: Vec<(usize, usize)> = (0..saves.len())
+        .filter_map(|index| {
+            let peer = saves
+                .iter()
+                .position(|other| other.game_slot == saves[index].game_slot && other.slot != saves[index].slot)?;
+            Some((index, peer))
+        })
+        .collect();
+    for (index, peer) in pairs {
+        let (peer_path, peer_time) = (saves[peer].data_path.clone(), saves[peer].state_time);
+        saves[index].paired_path = Some(peer_path);
+        saves[index].paired_time = peer_time;
+    }
+    for (index, save) in saves.iter_mut().enumerate() {
+        save.newest = newest.get(&save.game_slot) == Some(&index);
+    }
 }
 
 fn holds_player_saves(dir: &Path) -> bool {
@@ -308,6 +398,41 @@ mod tests {
         // A root whose saves sit directly in it is used as-is.
         assert_eq!(first_save_dir_in(&[root.join("first")]), Some(root.join("first/st_1")));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn two_save_points_per_game_slot_are_paired_and_one_is_newest() {
+        let dir = std::env::temp_dir().join(format!("nms-edit-pairs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["save3.hg", "save4.hg", "save5.hg", "save6.hg"] {
+            std::fs::write(dir.join(name), b"{}").unwrap();
+        }
+        // Slot 2's second file was written later; slot 3's first file was.
+        let older = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let newer = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000);
+        for (name, when) in [("save3.hg", older), ("save4.hg", newer), ("save5.hg", newer), ("save6.hg", older)] {
+            let file = std::fs::File::options().write(true).open(dir.join(name)).unwrap();
+            file.set_modified(when).unwrap();
+        }
+
+        let saves = scan(&dir);
+        assert_eq!(saves.len(), 4);
+        assert_eq!(game_slot(Slot::player_state(1)), Some(1));
+        assert_eq!(game_slot(Slot::player_state(2)), Some(1), "the pair shares a game slot");
+        assert_eq!(game_slot(Slot::player_state(29)), Some(15));
+        assert_eq!(game_slot(Slot::player_state(30)), Some(15));
+
+        let by_name = |name: &str| saves.iter().find(|save| save.data_path.ends_with(name)).unwrap();
+        for (name, expected_newest) in [("save3.hg", false), ("save4.hg", true), ("save5.hg", true), ("save6.hg", false)] {
+            let save = by_name(name);
+            assert_eq!(save.newest, expected_newest, "{name}");
+            assert_eq!(save.game_slot, if name.starts_with("save3") || name.starts_with("save4") { 2 } else { 3 });
+            assert!(save.paired_path.is_some(), "{name} knows its other save point");
+        }
+        assert_eq!(by_name("save4.hg").paired_time, Some(1_000), "the peer's own time, not this file's");
+        assert_eq!(by_name("save3.hg").paired_time, Some(2_000));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

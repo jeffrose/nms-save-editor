@@ -295,6 +295,13 @@ impl NameSource {
     }
 }
 
+/// Lowercase and drop the separators, for the fuzzy base-part match: the game
+/// joins a size letter that the save separates (`ABAND_CRATE_L` versus
+/// `BLD_ABAND_CRATEL_NAME`).
+fn normalize_key(text: &str) -> String {
+    text.chars().filter(|c| *c != '_').flat_map(char::to_lowercase).collect()
+}
+
 /// True when a string looks like a game id rather than a generated name.
 pub fn is_id_shaped(id: &str) -> bool {
     id.len() >= 2
@@ -492,6 +499,42 @@ impl ItemIndex {
         if let Some(stem) = bare.strip_prefix("BUILD_") {
             candidates.push(format!("{stem}_NAME"));
         }
+        // Base-building parts keep the id the save uses with a `BLD_` prefix:
+        // `U_POWERLINE` is `BLD_U_POWERLINE_NAME`. Station furniture adds
+        // `STATION_` (`BILLBOARD` is `BLD_STATION_BILLBOARD_NAME`), plantable
+        // flora are substances (`BARRENPLANT` is `SUB_BARRENPLANT_NAME`), and an
+        // id that already carries `BLD` only needs the separator
+        // (`BLDWALLUNIT` is `BLD_WALLUNIT_NAME`).
+        candidates.push(format!("BLD_{bare}_NAME"));
+        candidates.push(format!("BLD_STATION_{bare}_NAME"));
+        candidates.push(format!("SUB_{bare}_NAME"));
+        if let Some(rest) = bare.strip_prefix("BLD").filter(|rest| !rest.starts_with('_')) {
+            candidates.push(format!("BLD_{rest}_NAME"));
+        }
+        // Exosuit modules spell the id out: `BUI_ARMOUR_1` is `ARMOUR1_NAME`.
+        if let Some(rest) = bare.strip_prefix("BUI_") {
+            let joined = match rest.rsplit_once('_') {
+                Some((stem, index)) if !index.is_empty() && index.chars().all(|c| c.is_ascii_digit()) => {
+                    format!("{stem}{index}")
+                }
+                _ => rest.to_string(),
+            };
+            candidates.push(format!("{joined}_NAME"));
+        }
+        // A trailing part letter is joined in the key (`ABAND_CRATE_L` is
+        // `BLD_ABAND_CRATEL_NAME`) and a trailing number is separated
+        // (`WALLFLAG1` is `BLD_WALLFLAG_1_NAME`).
+        if let Some((stem, index)) = bare.rsplit_once('_') {
+            if index.len() == 1 && index.chars().all(|c| c.is_ascii_alphabetic()) {
+                candidates.push(format!("BLD_{stem}{index}_NAME"));
+            }
+        }
+        let digits = bare.len() - bare.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        if digits > 0 && digits < bare.len() {
+            let (stem, number) = bare.split_at(bare.len() - digits);
+            let stem = stem.trim_end_matches('_');
+            candidates.push(format!("BLD_{stem}_{number}_NAME"));
+        }
         for candidate in candidates {
             if let Some(text) = strings.get(&candidate) {
                 if !text.is_empty() {
@@ -501,16 +544,32 @@ impl ItemIndex {
         }
 
         // A few save ids truncate the stem (`BASE_BUBBLECLUS` for
-        // `BLD_BUBBLECLUSTER_NAME`), so fall back to the shortest base-part key
-        // the id is a prefix of. Only base parts pay for this scan.
+        // `BLD_BUBBLECLUSTER_NAME`, `FRE_CORR_A_GLAS` for
+        // `BLD_FRE_CORR_A_GLASS_NAME`), so fall back to the shortest base-part
+        // key the id is a prefix of. The scan is bounded to the `BLD_` range of
+        // the text table, which is a few thousand keys rather than 85,000.
+        let mut prefixes: Vec<String> = Vec::new();
         if let Some(stem) = part_stem {
-            let prefix = format!("BLD_{}", stem.strip_prefix('_').unwrap_or(stem));
+            prefixes.push(format!("BLD_{}", stem.strip_prefix('_').unwrap_or(stem)));
+        }
+        let normalized = normalize_key(&format!("BLD_{bare}"));
+        // A very short id would match half the table; base parts are longer.
+        if normalized.len() >= 8 {
+            prefixes.push(normalized);
+        }
+        if !prefixes.is_empty() {
+            let range = String::from("BLD_")..String::from("BLD`");
             let mut best: Option<(&String, &String)> = None;
-            for (key, text) in strings {
-                if !text.is_empty() && key.starts_with(&prefix) && key.ends_with("_NAME") {
-                    if best.is_none_or(|(current, _)| key.len() < current.len()) {
-                        best = Some((key, text));
-                    }
+            for (key, text) in strings.range::<String, _>(range) {
+                if text.is_empty() || !key.ends_with("_NAME") {
+                    continue;
+                }
+                let candidate = normalize_key(key);
+                let matches = prefixes
+                    .iter()
+                    .any(|prefix| key.starts_with(prefix.as_str()) || candidate.starts_with(prefix.as_str()));
+                if matches && best.is_none_or(|(current, _)| key.len() < current.len()) {
+                    best = Some((key, text));
                 }
             }
             if let Some((_, text)) = best {
@@ -710,6 +769,47 @@ mod tests {
             ItemIndex::resolve_against("^BASE_BUBBLECLUS", &text),
             Some(("BUBBLE CLUSTER", NameSource::Derived))
         );
+    }
+
+    #[test]
+    fn names_base_parts_by_prefixing_bld() {
+        let text = BTreeMap::from([
+            ("BLD_U_POWERLINE_NAME".to_string(), "ELECTRICAL WIRING".to_string()),
+            ("BLD_ABAND_BARREL_NAME".to_string(), "INDUSTRIAL BARREL".to_string()),
+            ("BLD_STATION_BILLBOARD_NAME".to_string(), "STATION BILLBOARD".to_string()),
+            ("SUB_BARRENPLANT_NAME".to_string(), "SPADONIUM".to_string()),
+            ("BLD_WALLUNIT_NAME".to_string(), "WALL UNIT".to_string()),
+            ("ARMOUR1_NAME".to_string(), "HEALTH MODULE SIGMA".to_string()),
+            ("BLD_ABAND_CRATEL_NAME".to_string(), "STORAGE UNIT".to_string()),
+            ("BLD_WALLFLAG_1_NAME".to_string(), "WALL FLAG 1".to_string()),
+            ("BLD_FRE_CORR_A_GLASS_NAME".to_string(), "FREIGHTER GLASS CORRIDOR".to_string()),
+            ("BLD_CUBEFOUND1_NAME".to_string(), "CUBOID ROOM FOUNDATION STRUT".to_string()),
+        ]);
+        let resolve = |id: &str| ItemIndex::resolve_against(id, &text).map(|(text, _)| text.to_string());
+
+        // A base part keeps its save id under `BLD_`.
+        assert_eq!(resolve("U_POWERLINE").as_deref(), Some("ELECTRICAL WIRING"));
+        assert_eq!(resolve("^ABAND_BARREL").as_deref(), Some("INDUSTRIAL BARREL"));
+        // Station furniture adds `STATION_`, flora are substances, and an id
+        // that already says `BLD` only needs the separator.
+        assert_eq!(resolve("BILLBOARD").as_deref(), Some("STATION BILLBOARD"));
+        assert_eq!(resolve("BARRENPLANT").as_deref(), Some("SPADONIUM"));
+        assert_eq!(resolve("BLDWALLUNIT").as_deref(), Some("WALL UNIT"));
+        // Exosuit modules spell the id out.
+        assert_eq!(resolve("BUI_ARMOUR_1").as_deref(), Some("HEALTH MODULE SIGMA"));
+        // A trailing part letter is joined in the key; a trailing number is
+        // separated.
+        assert_eq!(resolve("ABAND_CRATE_L").as_deref(), Some("STORAGE UNIT"));
+        assert_eq!(resolve("WALLFLAG1").as_deref(), Some("WALL FLAG 1"));
+        // Truncated stems fall back to the shortest key the id prefixes.
+        assert_eq!(resolve("FRE_CORR_A_GLAS").as_deref(), Some("FREIGHTER GLASS CORRIDOR"));
+        assert_eq!(resolve("CUBEFOUND").as_deref(), Some("CUBOID ROOM FOUNDATION STRUT"));
+
+        // Nothing is invented: an id the tables do not name stays unnamed, and a
+        // short id never fuzzy-matches its way into a wrong name.
+        assert!(resolve("BOBBLE_OCTO").is_none());
+        assert!(resolve("BUI_HEAD_1").is_none());
+        assert!(resolve("WALL").is_none(), "too short to prefix-match safely");
     }
 
     #[test]

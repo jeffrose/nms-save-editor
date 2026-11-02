@@ -17,7 +17,7 @@ use nms_edit::{
     live_save_location, now_unix, BackupStore, Cell, CommitOptions, Currencies, Currency, Inventory, ItemKind,
     KnownList, LiveLocation, NewItem, SaveBundle,
 };
-use nms_format::metadata::{Metadata, Slot};
+use nms_format::metadata::Slot;
 use nms_model::{describe_raw_path, KeyMap, RawStep};
 use serde_json::Value;
 
@@ -63,6 +63,16 @@ fn compact(value: &Value) -> String {
 pub struct SlotEntry {
     /// The storage slot the file name identifies.
     pub slot: Slot,
+    /// The user-visible game slot (`1..=15`) this save point belongs to.
+    pub game_slot: u8,
+    /// Whether this is the newer of the game slot's two save points.
+    pub newest: bool,
+    /// When the game wrote this save point, in Unix seconds.
+    pub state_time: Option<u64>,
+    /// The game slot's other save point.
+    pub paired_path: Option<PathBuf>,
+    /// When the game wrote the other save point.
+    pub paired_time: Option<u64>,
     /// Path of the data file (`save*.hg`).
     pub data_path: PathBuf,
     /// Decrypted summary, when the metadata file could be read.
@@ -72,6 +82,23 @@ pub struct SlotEntry {
 }
 
 impl SlotEntry {
+    /// The file name, which is how a command line addresses the save.
+    pub fn file_name(&self) -> String {
+        self.data_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Which of the slot's two save points this is, in words.
+    pub fn save_point(&self) -> &'static str {
+        if self.newest {
+            "newest"
+        } else {
+            "older"
+        }
+    }
+
     /// Name to show in the slot list.
     pub fn title(&self) -> String {
         match &self.summary {
@@ -795,46 +822,44 @@ fn shorten(text: &str, max: usize) -> String {
 
 /// List the save slots in a folder, ordered by slot number.
 pub fn scan_dir(dir: &Path) -> Result<Vec<SlotEntry>, String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
-    let mut slots = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(slot) = Slot::from_file_name(&name) else { continue };
-        if slot.player_number().is_none() {
-            // `accountdata.hg` and `usersettings.hg` are settings, not saves.
-            continue;
-        }
-        let metadata_path = path.with_file_name(slot.metadata_file_name());
-        let modified = std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
-        let (summary, problem) = match read_summary(&metadata_path, slot) {
-            Ok(mut summary) => {
-                summary.modified = modified;
-                (Some(summary), None)
-            }
-            Err(message) => (None, Some(message)),
-        };
-        slots.push(SlotEntry { slot, data_path: path, summary, problem });
+    // `nms_edit::scan` treats a folder it cannot read as a folder with no
+    // saves; the window says so instead of showing an empty list.
+    if !dir.is_dir() {
+        return Err(format!("cannot read {}: no such folder", dir.display()));
     }
-    slots.sort_by_key(|entry| entry.slot.index());
-    Ok(slots)
-}
-
-fn read_summary(path: &Path, slot: Slot) -> Result<SlotSummary, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let metadata = Metadata::read(&bytes, slot).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(SlotSummary {
-        save_name: metadata.save_name(),
-        location: metadata.location(),
-        game_mode: metadata.game_mode(),
-        play_time: metadata.play_time,
-        version: metadata.version,
-        modified: None,
-    })
+    // The edit layer does the scanning: it knows how the two save points of a
+    // game slot relate, and the window must not disagree with it about which
+    // one the game will load.
+    let found = nms_edit::scan(dir);
+    Ok(found
+        .into_iter()
+        .map(|save| {
+            let summary = save.metadata.as_ref().map(|metadata| SlotSummary {
+                save_name: metadata.save_name(),
+                location: metadata.location(),
+                game_mode: metadata.game_mode(),
+                play_time: metadata.play_time,
+                version: metadata.version,
+                modified: save
+                    .modified_unix
+                    .map(|seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
+            });
+            let problem = summary.is_none().then(|| {
+                format!("{}: metadata could not be read", save.slot.metadata_file_name())
+            });
+            SlotEntry {
+                slot: save.slot,
+                game_slot: save.game_slot,
+                newest: save.newest,
+                state_time: save.state_time,
+                paired_path: save.paired_path,
+                paired_time: save.paired_time,
+                data_path: save.data_path,
+                summary,
+                problem,
+            }
+        })
+        .collect())
 }
 
 /// The key map the CLI would load (`--mapping` has no GUI equivalent yet, so

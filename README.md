@@ -123,10 +123,15 @@ and a directory list that marks the folders actually holding saves, so the
 right one is obvious.
 
 The slot list is built from the metadata files, so every save shows its name,
-game mode, location and play time without decompressing anything. Opening a
+game mode, location and play time without decompressing anything. Each game
+slot holds **two save points** — its last auto save and its last manual save —
+so the list groups them, marks the newer one (the one the game loads by
+default), and the overview says which you are editing and names the other file. Opening a
 slot adds the save version, balances, known-item counts and every inventory the
 player state carries; the inventory tab draws the grid the game draws, with item
-names from the data pack and per-slot details on click.
+names from the data pack — the game's own text, regenerated locally — and
+per-slot details on click. Ids the text tables do not name (some legacy
+objects) show the id instead; the editor never invents a name.
 
 Editing follows a staging model: balances, slot amounts, repairs, and
 add/remove/move item actions change only the in-memory document, and a

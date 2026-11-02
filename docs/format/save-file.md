@@ -18,11 +18,39 @@ Only the Steam/GOG layout is implemented so far. The slot mapping is fixed:
 
 | File | Storage slot | Notes |
 |---|---|---|
-| `save.hg` | 2 (`PlayerState1`) | slot 1, auto-save |
-| `save2.hg` | 3 (`PlayerState2`) | slot 1, manual |
-| `saveN.hg` | N+1 | `N` runs 1..30, i.e. 15 slots × (auto, manual) |
+| `save.hg` | 2 (`PlayerState1`) | game slot 1, first save point |
+| `save2.hg` | 3 (`PlayerState2`) | game slot 1, second save point |
+| `saveN.hg` | N+1 | `N` runs 1..30, i.e. 15 slots × 2 save points |
 | `accountdata.hg` | 1 (`AccountData`) | account unlocks and rewards |
 | `usersettings.hg` | 0 (`UserSettings`) | options |
+
+### Two save points per slot
+
+A game slot is two files, not one: `save.hg` and `save2.hg` are slot 1's last
+**auto save** and last **manual save** — two states of the same game at
+different moments, not two halves of one file. Fifteen slots × two save points
+= the thirty `save*.hg` files, which is why a folder listing looks doubled.
+The game's own load menu offers a slot's two, shows the newer one, and loads it
+by default; the older one is where the previous save point is.
+
+Measured across the 15 pairs of the reference save set:
+
+* the two files of a pair always share the save name, game mode and location,
+  and differ in play time and timestamp by whatever was played between the two
+  saves — seconds in some pairs, weeks in others;
+* **nothing in either file says which is auto and which is manual.** All 96
+  decrypted metadata words were compared between the halves of every pair: not
+  one word separates them, and the payload has no such field either. What
+  separates them is the timestamp (metadata word 89);
+* the community's rule of thumb is that the odd file (`save.hg`, `save3.hg`, …)
+  is the auto save and the even one the manual save. Nothing measured here
+  contradicts it, and nothing confirms it, so this project does not claim it:
+  the editor reports which file is **newer**, which is the part that changes
+  what the game loads.
+
+That is why `FoundSave` carries `newest`, `paired_path` and `paired_time`, and
+why the editor groups a game slot's two files instead of listing thirty
+separate slots.
 
 ## 2. Data files: two containers, one payload
 

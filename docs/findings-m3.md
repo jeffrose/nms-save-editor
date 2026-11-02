@@ -90,6 +90,35 @@ sizes are derived per inventory type), and this project's rule is to document a
 missing field rather than guess one. The leads are in
 [item-tables.md](format/item-tables.md).
 
+## Base parts, station furniture and flora
+
+The first cut named the ids an *inventory* holds, but the lists a save also
+carries — `KnownProducts`, `SeenBaseBuildingObjects` — are mostly base-building
+parts, and the three item tables do not name them. Six more conventions, each
+accepted only when the text tables actually have the key, close most of that
+gap:
+
+| Save id | Key | Ids fixed |
+|---|---|---|
+| `U_POWERLINE` | `BLD_U_POWERLINE_NAME` | 583 |
+| `BILLBOARD` | `BLD_STATION_BILLBOARD_NAME` | 26 |
+| `BARRENPLANT` | `SUB_BARRENPLANT_NAME` | 4 |
+| `BLDWALLUNIT` | `BLD_WALLUNIT_NAME` | 1 |
+| `BUI_ARMOUR_1` | `ARMOUR1_NAME` | 3 |
+| `ABAND_CRATE_L`, `FRE_CORR_A_GLAS`, `CUBEFOUND` | `BLD_ABAND_CRATEL_NAME`, `BLD_FRE_CORR_A_GLASS_NAME`, `BLD_CUBEFOUND1_NAME` | 18 |
+
+The last row is the truncation scan: a save id that is a prefix of a
+`BLD_*_NAME` key, compared with the separators removed (`ABAND_CRATE_L` versus
+`BLD_ABAND_CRATEL_NAME` — the game joins a size letter the save separates). It
+is bounded to the `BLD_` range of the text table, and an id shorter than five
+characters is refused so a stray short id cannot match half the table.
+
+Measured on the 2,322 ids the known lists hold in `save3.hg`: **1,034 named
+(45%) before, 1,669 (71%) after**. The 653 that remain have no key anywhere in
+the text tables (`BOBBLE_OCTO`, `BUI_HEAD_1`, `BASECAPSULE`, `BILDWALLUNIT`,
+…) — legacy or object-table ids this pipeline does not read — and they are
+reported as unresolved rather than given a guessed name.
+
 ## Still open
 
 * **164 ids remain**, all procedural or ingredient ids (`B_ALK_A`, `B_COK_C1`,

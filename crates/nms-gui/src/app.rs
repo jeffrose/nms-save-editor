@@ -448,6 +448,21 @@ fn list_dirs(dir: &Path) -> Result<Vec<BrowseEntry>, String> {
     Ok(dirs)
 }
 
+/// `yyyy-mm-dd hh:mm`, the precision a save list needs.
+fn minute_time(seconds: u64) -> String {
+    let full = nms_edit::format_utc(seconds);
+    full.get(..16).map(str::to_string).unwrap_or(full)
+}
+
+/// Shorten text for a grid cell, keeping the front.
+fn fit(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{head}…")
+}
+
 /// The last two components of a path, for a button that has to fit.
 fn short_label(path: &Path) -> String {
     let parts: Vec<String> = path
@@ -736,32 +751,80 @@ impl EditorApp {
     fn slot_panel(&mut self, ctx: &egui::Context) {
         let dirty = self.session.dirty();
         let mut requested = None;
-        egui::SidePanel::left("slots").resizable(true).default_width(260.0).show(ctx, |ui| {
+        egui::SidePanel::left("slots").resizable(true).default_width(310.0).show(ctx, |ui| {
             ui.add_space(4.0);
             ui.label(RichText::new("SLOTS").small().strong());
+            ui.label(
+                RichText::new("two save points per slot; the game loads the newest")
+                    .small()
+                    .weak(),
+            );
             ui.add_space(4.0);
             if self.session.slots.is_empty() {
                 ui.label(RichText::new("No player saves found in this folder.").weak());
                 return;
             }
 
+            // The save stores two files per game slot — the slot's last auto
+            // save and its last manual save — so they are grouped here. Listing
+            // all thirty files as if they were separate slots is what makes the
+            // list look doubled.
+            let mut groups: Vec<(u8, Vec<usize>)> = Vec::new();
+            for (index, entry) in self.session.slots.iter().enumerate() {
+                match groups.last_mut() {
+                    Some((slot, members)) if *slot == entry.game_slot => members.push(index),
+                    _ => groups.push((entry.game_slot, vec![index])),
+                }
+            }
+
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                for (index, entry) in self.session.slots.iter().enumerate() {
-                    let selected = self
-                        .session
-                        .open
-                        .as_ref()
-                        .is_some_and(|open| open.entry.data_path == entry.data_path);
-                    let title = RichText::new(entry.title()).strong();
-                    if ui.selectable_label(selected, title).clicked() {
-                        requested = Some(index);
-                    }
-                    ui.label(RichText::new(entry.subtitle()).small().weak());
-                    if let Some(problem) = &entry.problem {
-                        let color = Color32::from_rgb(200, 140, 90);
-                        ui.label(RichText::new(problem).small().color(color));
-                    }
+                for (game_slot, members) in &groups {
+                    // The group's heading describes the state the game shows on
+                    // its load screen, which is the newer save point.
+                    let newest = members
+                        .iter()
+                        .copied()
+                        .find(|index| self.session.slots[*index].newest)
+                        .unwrap_or(members[0]);
+                    let entry = &self.session.slots[newest];
                     ui.add_space(6.0);
+                    let mut heading = format!("Slot {game_slot}");
+                    if let Some(summary) = &entry.summary {
+                        if !summary.save_name.is_empty() {
+                            heading.push_str(" · ");
+                            heading.push_str(&summary.save_name);
+                        }
+                    }
+                    ui.label(RichText::new(heading).strong());
+                    if let Some(summary) = &entry.summary {
+                        let mut parts = Vec::new();
+                        if !summary.game_mode.is_empty() {
+                            parts.push(summary.game_mode.clone());
+                        }
+                        parts.push(summary.play_time_text());
+                        if let Some(time) = entry.state_time {
+                            parts.push(format!("newest {}", minute_time(time)));
+                        }
+                        ui.label(RichText::new(parts.join(" · ")).small().weak());
+                    }
+
+                    for index in members {
+                        let entry = &self.session.slots[*index];
+                        let selected = self
+                            .session
+                            .open
+                            .as_ref()
+                            .is_some_and(|open| open.entry.data_path == entry.data_path);
+                        let when = entry.state_time.map(minute_time).unwrap_or_default();
+                        let text = format!("{:<14} {:<6} {}", entry.file_name(), entry.save_point(), when);
+                        if ui.selectable_label(selected, RichText::new(text).small()).clicked() {
+                            requested = Some(*index);
+                        }
+                        if let Some(problem) = &entry.problem {
+                            let color = Color32::from_rgb(200, 140, 90);
+                            ui.label(RichText::new(problem).small().color(color));
+                        }
+                    }
                 }
             });
         });
@@ -1238,7 +1301,37 @@ fn overview(
         );
         fact(ui, "File", Some(open.entry.data_path.display().to_string()));
         fact(ui, "Storage slot", Some(open.entry.slot.to_string()));
+        fact(
+            ui,
+            "Save point",
+            Some(format!("{} of slot {}", open.entry.save_point(), open.entry.game_slot)),
+        );
     });
+
+    // The pair is the thing a save editor user most often gets wrong: edit one
+    // file, and the game loads the other. Say it plainly.
+    if let Some(peer) = &open.entry.paired_path {
+        let name = peer.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let when = open.entry.paired_time.map(minute_time).unwrap_or_else(|| "unknown".to_string());
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(format!(
+                "The other save point of this slot is {name} ({when}). Each game slot holds two: \
+                 its last auto save and its last manual save, and the game loads the newer one by \
+                 default."
+            ))
+            .small()
+            .weak(),
+        );
+    }
+    if !open.entry.newest {
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new("You are editing the older save point of this slot.")
+                .small()
+                .color(Color32::from_rgb(200, 140, 90)),
+        );
+    }
 
     ui.add_space(16.0);
     ui.label(RichText::new("CURRENCIES").small().strong());
@@ -1653,11 +1746,18 @@ fn grid(
                 continue;
             };
 
-            let short: String = slot.id.trim_start_matches(['^', '!']).chars().take(6).collect();
+            // The game's own name for the item, which is what a player
+            // recognises; the id is the fallback for the ids the text tables do
+            // not name, and it is always in the hover text.
+            let item_name = pack.and_then(|pack| pack.item_name(&slot.id));
+            let label = match &item_name {
+                Some(name) => fit(name, 10),
+                None => slot.id.trim_start_matches(['^', '!']).chars().take(6).collect(),
+            };
             painter.text(
                 cell_rect.center() - Vec2::new(0.0, 6.0),
                 Align2::CENTER_CENTER,
-                short,
+                label,
                 FontId::proportional(10.0),
                 strong,
             );
@@ -1674,7 +1774,7 @@ fn grid(
                 weak,
             );
 
-            let name = pack.and_then(|pack| pack.item_name(&slot.id)).unwrap_or_else(|| slot.id.clone());
+            let name = item_name.clone().unwrap_or_else(|| slot.id.clone());
             let hover = if moving.is_some() {
                 format!("{name}\n{}\nclick to cancel the move", slot.id)
             } else {
@@ -1700,10 +1800,14 @@ fn slot_details(
     inventory_full: bool,
 ) -> Option<Action> {
     let mut action = None;
-    let name = pack.and_then(|pack| pack.item_name(&slot.id)).unwrap_or_else(|| slot.id.clone());
+    let item_name = pack.and_then(|pack| pack.item_name(&slot.id));
     ui.horizontal(|ui| {
-        ui.label(RichText::new(name).heading());
-        ui.label(RichText::new(&slot.id).weak());
+        // The name is the heading; the id follows only when it says something
+        // the name does not.
+        ui.label(RichText::new(item_name.clone().unwrap_or_else(|| slot.id.clone())).heading());
+        if item_name.is_some() {
+            ui.label(RichText::new(&slot.id).weak());
+        }
     });
     egui::Grid::new("slot-details").num_columns(2).spacing([24.0, 4.0]).show(ui, |ui| {
         fact(ui, "Kind", Some(slot.kind.label().to_string()));
@@ -1843,7 +1947,9 @@ fn known_tab(
             for index in range {
                 let id = visible[index];
                 let name = pack.and_then(|pack| pack.item_name(id)).unwrap_or_default();
-                let text = if name.is_empty() { id.clone() } else { format!("{id}   {name}") };
+                // Name first: it is what the player is looking for, and the id
+                // stays visible because that is what commands take.
+                let text = if name.is_empty() { id.clone() } else { format!("{name}   {id}") };
                 let response = ui.selectable_label(state.selected.as_deref() == Some(id.as_str()), text);
                 if response.clicked() {
                     state.selected = Some(id.clone());
@@ -2381,6 +2487,80 @@ mod tests {
         let mut app = EditorApp::from_session(Session::empty());
         let text = drawn_text(&mut app);
         assert!(text.contains("No save open"), "expected the empty-state hint:\n{text}");
+    }
+
+    #[test]
+    fn the_slot_list_groups_a_game_slots_two_save_points() {
+        let dir = scratch("pairs");
+        std::fs::write(dir.join("save2.hg"), SAVE.as_bytes()).unwrap();
+        // `save.hg` and `save2.hg` are slot 1's two save points; the times say
+        // which one the game would load.
+        let older = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let newer = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000);
+        for (name, when) in [("save2.hg", older), ("save.hg", newer)] {
+            let file = std::fs::File::options().write(true).open(dir.join(name)).unwrap();
+            file.set_modified(when).unwrap();
+        }
+
+        let mut app = app(&dir);
+        let text = drawn_text(&mut app);
+        let line_for = |text: &str, name: &str| -> String {
+            text.lines().find(|line| line.contains(name)).unwrap_or_default().to_string()
+        };
+        assert!(text.contains("Slot 1"), "the game slot is the group:\n{text}");
+        assert_eq!(text.matches("Slot 1").count(), 1, "one group per game slot:\n{text}");
+        assert!(text.contains("two save points per slot"), "{text}");
+        assert!(line_for(&text, "save.hg").contains("newest"), "{text}");
+        assert!(line_for(&text, "save2.hg").contains("older"), "{text}");
+
+        // Opening the older one says so, and names the other file.
+        app.session.select(1);
+        app.sync_edit();
+        let text = drawn_text(&mut app);
+        assert!(text.contains("older save point"), "{text}");
+        assert!(text.contains("save.hg"), "the other file is named:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn item_names_are_shown_when_a_data_pack_is_loaded() {
+        // The pack is generated from the game's own text tables; without one the
+        // window can only show the id, which is the fallback this test pins
+        // down as well.
+        let dir = scratch("names");
+        let pack_path = dir.join("strings.json");
+        std::fs::write(
+            &pack_path,
+            r#"{"format":2,"language":"english","game_version":null,"generated_at":0,"notes":"t",
+                "strings":{},"items":{"CARBON":"CARBON","IRON":"FERITE DUST"},"categories":{}}"#,
+        )
+        .expect("write pack");
+        let pack = nms_data::DataPack::load(&pack_path).expect("load pack");
+
+        let mut app = EditorApp::from_session(Session::open_dir_with(
+            &dir,
+            KeyMap::builtin(),
+            Some(pack),
+            Vec::new(),
+        ));
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Inventories;
+
+        let text = drawn_text(&mut app);
+        assert!(text.contains("CARBON"), "the grid shows the name, not the id:\n{text}");
+        assert!(
+            !text.contains("^CARBON"),
+            "the raw id is left to the hover text and the details:\n{text}"
+        );
+
+        // With the slot selected, the details lead with the name and keep the
+        // id beside it, because that is what commands take.
+        app.edit.selected_slot = Some(0);
+        let text = drawn_text(&mut app);
+        assert!(text.contains("CARBON"), "{text}");
+        assert!(text.contains("^CARBON"), "the details keep the id:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

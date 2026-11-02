@@ -16,7 +16,9 @@ nmsedit — No Man's Sky save tool
 
 USAGE:
     nmsedit info <save.hg>                 summarise a save file and its JSON payload
-    nmsedit slots <save-dir>               list every slot in a save directory
+    nmsedit slots <save-dir>               list every save in a directory: two
+                                           save points per game slot, the newer
+                                           one marked
     nmsedit get <save.hg> <path>           read a field by readable path
     nmsedit set <save.hg> <path> <value>   edit a field, back up, and refresh metadata
     nmsedit export <save.hg|dir> [out]     write readable JSON (mapping applied)
@@ -1053,7 +1055,14 @@ fn cmd_slots(args: &[String]) -> Result<(), String> {
     let positional = positional(args);
     let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
     let keys = keys(args)?;
-    let mut found = 0usize;
+    // The save keeps two files per game slot (its last auto save and its last
+    // manual save); the marker says which one the game would load. Ordering by
+    // game slot is what makes the pairs visible.
+    let pairing: std::collections::HashMap<PathBuf, (u8, bool)> = nms_edit::scan(&dir)
+        .into_iter()
+        .map(|save| (save.data_path.clone(), (save.game_slot, save.newest)))
+        .collect();
+    let mut rows: Vec<(u8, String)> = Vec::new();
 
     for name in list_dir(&dir)? {
         let Some(slot) = Slot::from_file_name(&name) else { continue };
@@ -1080,12 +1089,35 @@ fn cmd_slots(args: &[String]) -> Result<(), String> {
             None => "meta: unavailable".to_string(),
         };
 
-        println!("{:<12} {:<12} {:>10} bytes  {}  |  {}", name, slot.to_string(), raw.len(), detail, meta_detail);
-        found += 1;
+        let (game_slot, newest) = pairing.get(&path).copied().unwrap_or((0, false));
+        // accountdata/usersettings are not game slots; leave the pair columns
+        // empty rather than saying "slot 0".
+        let (slot_text, point) = if game_slot == 0 {
+            ("—".to_string(), "")
+        } else {
+            (game_slot.to_string(), if newest { "newest" } else { "older" })
+        };
+        rows.push((
+            game_slot,
+            format!(
+                "slot {:<2} {:<6} {:<12} {:<12} {:>10} bytes  {}  |  {}",
+                slot_text,
+                point,
+                name,
+                slot.to_string(),
+                raw.len(),
+                detail,
+                meta_detail
+            ),
+        ));
     }
 
-    if found == 0 {
+    if rows.is_empty() {
         return Err(format!("no save files found in {}", dir.display()));
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    for (_, line) in &rows {
+        println!("{line}");
     }
     Ok(())
 }
