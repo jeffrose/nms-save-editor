@@ -138,6 +138,11 @@ the node it was found on, so duplicate readable names cannot send it elsewhere.
 Nothing is created: a path that does not resolve is refused, so a typo cannot
 add junk to a save.
 
+The overview also lists the save's backups, written before every save, with a
+restore button that asks first. A restore archives the files it replaces as
+`pre-restore`, so undoing a restore works too, and the GUI refuses to restore
+into a live folder just like it refuses to save there.
+
 The window is **read-only over a live save folder**: a path that looks like the
 game's own (or a Steam-managed Proton prefix) cannot be saved to from the GUI,
 and unlike the CLI there is no override. Copy the folder and open the copy.
@@ -219,7 +224,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
 | **M3 (done)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
 | **M4 (done)** | player state: currencies, inventory grids and slots, known-item lists — library and CLI, with the measured invariants in [`docs/format/player-state.md`](docs/format/player-state.md) |
-| **M5 (in progress)** | GUI (`egui`): slot browser, save summary, balances, inventory grids, known-item lists, staged editing and the JSON view are done; a backup-history panel is next |
+| **M5 (done)** | GUI (`egui`): slot browser from metadata, save summary, balances, inventory grids, known-item lists, backup history with restore, staged editing, and the JSON view with exact-path editing |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |
 

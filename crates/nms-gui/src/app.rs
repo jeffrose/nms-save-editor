@@ -11,7 +11,7 @@
 //! same rule the edit layer enforces, and skipping it would put an edit on every
 //! machine signed into the account.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, RichText, ScrollArea, Sense, Stroke, StrokeKind, Vec2,
@@ -22,7 +22,7 @@ use nms_model::{describe_raw_path, KeyMap, RawStep};
 use serde_json::Value;
 
 use crate::session::{
-    contains_ci, format_duration, json_summary, JsonHit, OpenSave, Session, JSON_HIT_LIMIT,
+    contains_ci, format_duration, json_summary, BackupSummary, JsonHit, OpenSave, Session, JSON_HIT_LIMIT,
 };
 
 /// Which part of a save the central panel is showing.
@@ -230,6 +230,8 @@ enum Action {
     },
     /// Switch to the known-items tab showing one list.
     OpenKnownList(KnownList),
+    /// Ask to restore one archive over the open save.
+    RestoreBackup(PathBuf),
     Save,
     Discard,
 }
@@ -367,11 +369,17 @@ pub struct EditorApp {
     edit: EditState,
     known: KnownState,
     json: JsonState,
+    /// Backups of the open save, newest first.
+    backups: Vec<BackupSummary>,
+    /// Why the backup list could not be read, when that happened.
+    backups_note: Option<String>,
     /// Last message shown in the bottom bar.
     status: Option<String>,
     pending_switch: Option<PendingSwitch>,
     confirm_save: bool,
     confirm_discard: bool,
+    /// Archive the user asked to restore, awaiting confirmation.
+    confirm_restore: Option<PathBuf>,
 }
 
 impl EditorApp {
@@ -393,10 +401,13 @@ impl EditorApp {
             edit: EditState::default(),
             known: KnownState::default(),
             json: JsonState::default(),
+            backups: Vec::new(),
+            backups_note: None,
             status: None,
             pending_switch: None,
             confirm_save: false,
             confirm_discard: false,
+            confirm_restore: None,
         };
         app.sync_edit();
         app
@@ -412,6 +423,7 @@ impl EditorApp {
             self.json.reveal.clear();
             self.confirm_save = false;
             self.confirm_discard = false;
+            self.confirm_restore = None;
             self.pending_switch = None;
         }
         self.top_bar(ctx);
@@ -437,6 +449,26 @@ impl EditorApp {
             self.known.sync(open);
             self.json.sync(open);
         }
+        match self.session.backups() {
+            Ok(backups) => {
+                self.backups = backups;
+                self.backups_note = None;
+            }
+            Err(message) => {
+                self.backups.clear();
+                self.backups_note = Some(message);
+            }
+        }
+    }
+
+    /// Restore an archive and re-read everything the window shows.
+    fn restore_backup(&mut self, archive: &Path) {
+        let result = self.session.restore_backup(archive);
+        match result {
+            Ok(message) => self.status = Some(message),
+            Err(message) => self.status = Some(format!("error: {message}")),
+        }
+        self.sync_edit();
     }
 
     /// Apply one staged action and refresh the views it touched.
@@ -465,6 +497,10 @@ impl EditorApp {
                 self.known.list = list;
                 self.tab = Tab::Known;
                 Ok(format!("editing {}", list.label()))
+            }
+            Action::RestoreBackup(path) => {
+                self.confirm_restore = Some(path);
+                Ok("the restore needs confirmation".to_string())
             }
             Action::Save => {
                 self.edit.moving = None;
@@ -624,7 +660,14 @@ impl EditorApp {
                 live_banner(ui);
             }
             action = match self.tab {
-                Tab::Overview => overview(ui, open, &mut self.edit, editable),
+                Tab::Overview => overview(
+                    ui,
+                    open,
+                    &mut self.edit,
+                    editable,
+                    &self.backups,
+                    self.backups_note.as_deref(),
+                ),
                 Tab::Inventories => inventories_tab(
                     ui,
                     open,
@@ -774,6 +817,44 @@ impl EditorApp {
             }
         }
 
+        if let Some(archive) = self.confirm_restore.clone() {
+            let mut do_restore = false;
+            let mut cancel = false;
+            let name = archive
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            egui::Window::new("Restore backup")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(format!("Replace the open save with {name}?"));
+                    ui.label(
+                        RichText::new(
+                            "The files being replaced are archived first (as pre-restore), and any \
+                             staged edits are discarded.",
+                        )
+                        .weak(),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Restore").clicked() {
+                            do_restore = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_restore {
+                self.confirm_restore = None;
+                self.restore_backup(&archive);
+            }
+            if cancel {
+                self.confirm_restore = None;
+            }
+        }
+
         if self.confirm_discard {
             let mut do_discard = false;
             let mut cancel = false;
@@ -826,7 +907,14 @@ fn live_banner(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
-fn overview(ui: &mut egui::Ui, open: &OpenSave, edit: &mut EditState, editable: bool) -> Option<Action> {
+fn overview(
+    ui: &mut egui::Ui,
+    open: &OpenSave,
+    edit: &mut EditState,
+    editable: bool,
+    backups: &[BackupSummary],
+    backups_note: Option<&str>,
+) -> Option<Action> {
     let mut action = None;
     ui.add_space(6.0);
     ui.heading(open.entry.title());
@@ -886,6 +974,7 @@ fn overview(ui: &mut egui::Ui, open: &OpenSave, edit: &mut EditState, editable: 
     }
 
     ui.add_space(16.0);
+    ui.add_space(16.0);
     ui.label(RichText::new("KNOWN ITEMS").small().strong());
     ui.add_space(4.0);
     if open.known.is_empty() {
@@ -900,6 +989,34 @@ fn overview(ui: &mut egui::Ui, open: &OpenSave, edit: &mut EditState, editable: 
                         action = Some(Action::OpenKnownList(entry.list));
                     }
                 });
+                ui.end_row();
+            }
+        });
+    }
+
+    ui.add_space(16.0);
+    ui.label(RichText::new("BACKUPS").small().strong());
+    ui.add_space(4.0);
+    if let Some(note) = backups_note {
+        ui.label(RichText::new(note).small().color(Color32::from_rgb(200, 140, 90)));
+    } else if backups.is_empty() {
+        ui.label(RichText::new("no backups yet — the first save writes one").weak());
+    } else {
+        egui::Grid::new("backups").num_columns(4).spacing([16.0, 4.0]).show(ui, |ui| {
+            for backup in backups {
+                let name = backup
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                ui.label(RichText::new(name).monospace().small());
+                ui.label(RichText::new(bytes_text(backup.size)).small().weak());
+                ui.label(
+                    RichText::new(backup.modified.map(age_text).unwrap_or_default()).small().weak(),
+                );
+                if ui.add_enabled(editable, egui::Button::new("Restore").small()).clicked() {
+                    action = Some(Action::RestoreBackup(backup.path.clone()));
+                }
                 ui.end_row();
             }
         });
@@ -1634,6 +1751,19 @@ fn fact(ui: &mut egui::Ui, name: &str, value: Option<String>) {
     ui.end_row();
 }
 
+/// A byte count in the unit that keeps it short.
+fn bytes_text(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    let value = bytes as f64;
+    if value < KIB {
+        format!("{bytes} B")
+    } else if value < KIB * KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{:.1} MiB", value / (KIB * KIB))
+    }
+}
+
 /// Group digits in threes, as the game's own UI does for large balances.
 fn thousands(value: u32) -> String {
     let digits = value.to_string();
@@ -1803,6 +1933,43 @@ mod tests {
         let mut app = EditorApp::from_session(Session::empty());
         let text = drawn_text(&mut app);
         assert!(text.contains("No save open"), "expected the empty-state hint:\n{text}");
+    }
+
+    #[test]
+    fn the_overview_lists_backups_and_confirms_a_restore() {
+        let dir = scratch("backup");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        assert!(app.backups.is_empty(), "nothing saved yet");
+
+        app.apply(Action::SetCurrency(Currency::Units, 555));
+        app.apply(Action::Save);
+        assert_eq!(app.backups.len(), 1, "a save writes one archive");
+        assert_eq!(
+            app.session.open.as_ref().expect("open").currencies.expect("currencies").units,
+            555
+        );
+
+        // The overview draws the archive's name and a restore button.
+        let name = app.backups[0].path.file_name().unwrap().to_string_lossy().into_owned();
+        let text = drawn_text(&mut app);
+        for expected in ["BACKUPS", name.as_str(), "Restore"] {
+            assert!(text.contains(expected), "the overview should draw {expected:?}:\n{text}");
+        }
+
+        // The button only asks; the restore itself puts the old file back.
+        let archive = app.backups[0].path.clone();
+        app.apply(Action::RestoreBackup(archive.clone()));
+        assert_eq!(app.confirm_restore.as_deref(), Some(archive.as_path()));
+        app.confirm_restore = None;
+        app.restore_backup(&archive);
+        assert!(!app.session.dirty());
+        assert_eq!(
+            app.session.open.as_ref().expect("open").currencies.expect("currencies").units,
+            1200
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

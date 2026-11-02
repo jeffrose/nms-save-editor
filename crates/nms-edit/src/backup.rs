@@ -89,6 +89,16 @@ impl BackupStore {
         })?;
 
         let archive = self.root.join(format!("{label}_{}.zip", format_timestamp(timestamp)));
+        // Two saves inside the same second would otherwise share a name, and
+        // the second would overwrite the first restore point.
+        let mut archive = archive;
+        let mut suffix = 2u32;
+        while archive.exists() {
+            archive = self
+                .root
+                .join(format!("{label}_{}_{suffix}.zip", format_timestamp(timestamp)));
+            suffix += 1;
+        }
         let file = std::fs::File::create(&archive).map_err(|source| BackupError::Directory {
             path: archive.display().to_string(),
             source,
@@ -295,6 +305,26 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_saves_in_one_second_keep_two_archives() {
+        let dir = std::env::temp_dir().join(format!("nms-edit-backup-collision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let data = dir.join("save.hg");
+        std::fs::write(&data, b"payload").unwrap();
+
+        let store = BackupStore::new(dir.join("backups"), 10);
+        let files = vec![("save.hg".to_string(), data.clone())];
+        let first = store.create("save", &files, 1_793_488_365).unwrap().unwrap();
+        std::fs::write(&data, b"changed").unwrap();
+        let second = store.create("save", &files, 1_793_488_365).unwrap().unwrap();
+
+        assert_ne!(first.path, second.path, "the second save must not overwrite the first archive");
+        let listed = store.list("save").unwrap();
+        assert_eq!(listed.len(), 2, "both archives stay listed: {listed:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn formats_known_timestamps() {

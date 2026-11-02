@@ -14,8 +14,8 @@ use std::time::SystemTime;
 
 use nms_data::DataPack;
 use nms_edit::{
-    live_save_location, now_unix, Cell, CommitOptions, Currencies, Currency, Inventory, ItemKind, KnownList,
-    LiveLocation, NewItem, SaveBundle,
+    live_save_location, now_unix, BackupStore, Cell, CommitOptions, Currencies, Currency, Inventory, ItemKind,
+    KnownList, LiveLocation, NewItem, SaveBundle,
 };
 use nms_format::metadata::{Metadata, Slot};
 use nms_model::{describe_raw_path, KeyMap, RawStep};
@@ -97,6 +97,28 @@ impl SlotEntry {
             None => "metadata could not be read".to_string(),
         }
     }
+}
+
+/// A backup archive of the open save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupSummary {
+    /// Archive path.
+    pub path: PathBuf,
+    /// Archive size in bytes.
+    pub size: u64,
+    /// When the archive was last written.
+    pub modified: Option<SystemTime>,
+}
+
+/// How many archives to keep per save; the same limit the CLI uses.
+pub const BACKUP_KEEP: usize = 10;
+
+/// The folder a save's backups live in.
+///
+/// The CLI's `--backup-dir` defaults to the same place, so both tools share
+/// one history.
+fn backup_root(data_path: &Path) -> PathBuf {
+    data_path.parent().unwrap_or_else(|| Path::new(".")).join("Save Backups")
 }
 
 /// One search hit in the JSON document.
@@ -502,6 +524,58 @@ impl Session {
         })
     }
 
+    /// Existing backups of the open save, newest first.
+    pub fn backups(&self) -> Result<Vec<BackupSummary>, String> {
+        let Some(open) = self.open.as_ref() else { return Ok(Vec::new()) };
+        let Some(label) = open.entry.data_path.file_stem().map(|stem| stem.to_string_lossy().into_owned())
+        else {
+            return Ok(Vec::new());
+        };
+        let store = BackupStore::new(backup_root(&open.entry.data_path), BACKUP_KEEP);
+        let entries = store.list(&label).map_err(|error| error.to_string())?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| BackupSummary {
+                modified: std::fs::metadata(&entry.path).and_then(|meta| meta.modified()).ok(),
+                path: entry.path,
+                size: entry.size,
+            })
+            .collect())
+    }
+
+    /// Restore a backup archive over the open save.
+    ///
+    /// A live save folder is refused, like every other write. The files being
+    /// replaced are archived first (under the `pre-restore` label), so a
+    /// restore is itself undoable; the open save is re-read afterwards.
+    pub fn restore_backup(&mut self, archive: &Path) -> Result<String, String> {
+        let (path, folder) = {
+            let open = self.open.as_ref().ok_or_else(|| "no save is open".to_string())?;
+            let path = open.entry.data_path.clone();
+            if let Some(live) = live_save_location(&path) {
+                return Err(format!(
+                    "refusing to write: {} is {}. Copy the folder and open the copy.",
+                    path.display(),
+                    live.describe()
+                ));
+            }
+            let folder = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+            (path, folder)
+        };
+        let store = BackupStore::new(backup_root(&path), BACKUP_KEEP);
+        let restored = nms_edit::backup::restore_archive(archive, &folder, &store, now_unix())
+            .map_err(|error| error.to_string())?;
+
+        // The window was showing the files the restore just replaced.
+        self.open = None;
+        if let Some(index) = self.slots.iter().position(|entry| entry.data_path == path) {
+            self.select(index);
+        }
+        self.rescan();
+        let name = archive.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        Ok(format!("restored {} file(s) from {name}", restored.len()))
+    }
+
     /// Re-read the open slot from disk, throwing away staged edits.
     pub fn reload(&mut self) -> Result<String, String> {
         let path = self
@@ -539,13 +613,12 @@ impl Session {
                     live.describe()
                 ));
             }
-            let backup_root = path.parent().unwrap_or_else(|| Path::new(".")).join("Save Backups");
-            (path, backup_root)
-        };
+            let root = backup_root(&path);
+            (path, root)        };
 
         let options = CommitOptions {
             backup_root: Some(backup_root),
-            keep_backups: 10,
+            keep_backups: BACKUP_KEEP,
             timestamp: Some(now_unix()),
             dry_run: false,
             confirm_live: false,
@@ -988,6 +1061,12 @@ mod tests {
         let error = session.save().expect_err("the window refuses to write a live folder");
         assert!(error.contains("refusing to write"), "{error}");
 
+        // Restoring is a write too, so it is refused the same way.
+        let error = session
+            .restore_backup(Path::new("/nonexistent/save_20260101_000000.zip"))
+            .expect_err("the window refuses to restore into a live folder");
+        assert!(error.contains("refusing to write"), "{error}");
+
         // The file on disk still holds the original balance.
         let on_disk = SaveBundle::load(&live.join("save.hg"), KeyMap::builtin()).expect("reload");
         assert_eq!(on_disk.currencies().expect("currencies").units, 1200);
@@ -1060,6 +1139,35 @@ mod tests {
         session.reload().expect("reload");
         let open = session.open.as_ref().expect("open");
         assert_eq!(open.value_at(&steps).and_then(Value::as_i64), Some(4321));
+    }
+
+    #[test]
+    fn backups_are_listed_and_restore_round_trips() {
+        let scratch = Scratch::new("backup");
+        scratch.write("save.hg", SAVE.as_bytes());
+        let mut session = session(&scratch.0);
+        session.select(0);
+        assert!(session.backups().expect("list backups").is_empty(), "nothing saved yet");
+
+        session.set_currency(Currency::Units, 111).expect("stage");
+        session.save().expect("first save");
+        let after_first = session.backups().expect("list backups");
+        assert_eq!(after_first.len(), 1);
+        assert!(after_first[0].size > 0);
+
+        // A second save in the same second must not overwrite the first
+        // restore point; the oldest archive holds the state before the first
+        // edit.
+        session.set_currency(Currency::Units, 222).expect("stage");
+        session.save().expect("second save");
+        let all = session.backups().expect("list backups");
+        assert_eq!(all.len(), 2, "each save keeps its own archive: {all:?}");
+        let oldest = all.last().expect("the older archive").path.clone();
+
+        let report = session.restore_backup(&oldest).expect("restore");
+        assert!(report.contains("restored 1 file(s)"), "{report}");
+        assert!(!session.dirty(), "a restored save is clean");
+        assert_eq!(session.open.as_ref().expect("open").currencies.expect("currencies").units, 1200);
     }
 
     #[test]
