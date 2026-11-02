@@ -448,6 +448,22 @@ fn list_dirs(dir: &Path) -> Result<Vec<BrowseEntry>, String> {
     Ok(dirs)
 }
 
+/// The last two components of a path, for a button that has to fit.
+fn short_label(path: &Path) -> String {
+    let parts: Vec<String> = path
+        .components()
+        .rev()
+        .take(2)
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let joined = parts.into_iter().rev().collect::<Vec<_>>().join("/");
+    if joined.is_empty() {
+        path.display().to_string()
+    } else {
+        joined
+    }
+}
+
 /// Where the browser starts: the folder in the box, else the platform's usual
 /// one, else home.
 fn browse_start(path_input: &str) -> PathBuf {
@@ -997,10 +1013,9 @@ impl EditorApp {
                                 }
                             }
                             for root in &browser.roots {
-                                let name = root
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| root.display().to_string());
+                                // Every platform's root ends in `NMS`, so one
+                                // component would label them all the same.
+                                let name = short_label(root);
                                 if ui.small_button(name).on_hover_text(root.display().to_string()).clicked() {
                                     go = Some(root.clone());
                                 }
