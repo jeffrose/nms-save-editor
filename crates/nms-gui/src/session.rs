@@ -1,0 +1,487 @@
+//! The GUI's headless model.
+//!
+//! Everything that reads or writes a file lives here, so the drawing code is
+//! only a translation of state into widgets and the interesting parts can be
+//! tested without a window.
+//!
+//! Loading is split in two on purpose: a folder scan reads only the small
+//! metadata files, which gives every slot's name, mode and play time in
+//! milliseconds, while the 9 MB payload of a save is parsed only when that slot
+//! is opened.
+
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use nms_data::DataPack;
+use nms_edit::{Currencies, Inventory, KnownList, SaveBundle};
+use nms_format::metadata::{Metadata, Slot};
+use nms_model::KeyMap;
+
+/// What a save's metadata file says about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotSummary {
+    /// Player-chosen save name.
+    pub save_name: String,
+    /// Location summary the game shows on the load screen.
+    pub location: String,
+    /// Game mode, e.g. `Normal` or `Creative`.
+    pub game_mode: String,
+    /// Total play time in seconds.
+    pub play_time: u64,
+    /// Save version word.
+    pub version: u32,
+    /// Modification time of the data file.
+    pub modified: Option<SystemTime>,
+}
+
+impl SlotSummary {
+    /// Play time as `hours:minutes:seconds`.
+    pub fn play_time_text(&self) -> String {
+        format_duration(self.play_time)
+    }
+}
+
+/// `hours:minutes:seconds`, with hours allowed to run past 24.
+pub fn format_duration(seconds: u64) -> String {
+    format!("{}:{:02}:{:02}", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+}
+
+/// One storage slot found in a save folder.
+#[derive(Debug, Clone)]
+pub struct SlotEntry {
+    /// The storage slot the file name identifies.
+    pub slot: Slot,
+    /// Path of the data file (`save*.hg`).
+    pub data_path: PathBuf,
+    /// Decrypted summary, when the metadata file could be read.
+    pub summary: Option<SlotSummary>,
+    /// Why the metadata could not be read.
+    pub problem: Option<String>,
+}
+
+impl SlotEntry {
+    /// Name to show in the slot list.
+    pub fn title(&self) -> String {
+        match &self.summary {
+            Some(summary) if !summary.save_name.is_empty() => summary.save_name.clone(),
+            _ => self.slot.to_string(),
+        }
+    }
+
+    /// A one-line description to show under the title.
+    pub fn subtitle(&self) -> String {
+        match &self.summary {
+            Some(summary) => {
+                let mut parts = Vec::new();
+                if !summary.game_mode.is_empty() {
+                    parts.push(summary.game_mode.clone());
+                }
+                if !summary.location.is_empty() {
+                    parts.push(summary.location.clone());
+                }
+                parts.push(summary.play_time_text());
+                parts.join(" · ")
+            }
+            None => "metadata could not be read".to_string(),
+        }
+    }
+}
+
+/// A save that has been opened and decoded.
+pub struct OpenSave {
+    /// The slot entry it was loaded from.
+    pub entry: SlotEntry,
+    /// The loaded save, its document and its metadata.
+    pub bundle: SaveBundle,
+    /// Summary fields read from the JSON.
+    pub info: nms_model::SaveInfo,
+    /// Player balances, when the save has a player state.
+    pub currencies: Option<Currencies>,
+    /// Why the balances could not be read.
+    pub currencies_error: Option<String>,
+    /// Every inventory the player state carries, in file order.
+    pub inventories: Vec<Inventory>,
+    /// How many ids each known-item list holds, when the list exists.
+    pub known: Vec<(KnownList, usize)>,
+}
+
+/// A folder of saves and, at most, one opened slot.
+pub struct Session {
+    /// The folder being browsed.
+    pub dir: PathBuf,
+    /// Every slot the folder contains, ordered by slot number.
+    pub slots: Vec<SlotEntry>,
+    /// Key map used to resolve readable field names.
+    pub keys: KeyMap,
+    /// Names come from the game when a data pack was generated; absent otherwise.
+    pub pack: Option<DataPack>,
+    /// Human-readable notes about what was or was not found on startup.
+    pub notes: Vec<String>,
+    /// Folder-level failure, e.g. a missing directory.
+    pub error: Option<String>,
+    /// The slot currently open, if any.
+    pub open: Option<OpenSave>,
+}
+
+impl Session {
+    /// An empty session, before a folder has been chosen.
+    pub fn empty() -> Session {
+        Session {
+            dir: PathBuf::new(),
+            slots: Vec::new(),
+            keys: KeyMap::builtin(),
+            pack: None,
+            notes: Vec::new(),
+            error: None,
+            open: None,
+        }
+    }
+
+    /// Open a folder with the user's configured key map and data pack.
+    pub fn open_dir(dir: &Path) -> Session {
+        let mut notes = Vec::new();
+        let keys = match default_key_map() {
+            Ok(keys) => keys,
+            Err(note) => {
+                notes.push(note);
+                KeyMap::builtin()
+            }
+        };
+        let pack = match default_pack() {
+            Ok(pack) => pack,
+            Err(note) => {
+                notes.push(note);
+                None
+            }
+        };
+        Session::open_dir_with(dir, keys, pack, notes)
+    }
+
+    /// Open a folder with an explicit key map and data pack.
+    pub fn open_dir_with(dir: &Path, keys: KeyMap, pack: Option<DataPack>, notes: Vec<String>) -> Session {
+        let mut session = Session {
+            dir: dir.to_path_buf(),
+            slots: Vec::new(),
+            keys,
+            pack,
+            notes,
+            error: None,
+            open: None,
+        };
+        session.rescan();
+        session
+    }
+
+    /// Re-read the folder listing.
+    ///
+    /// An open save stays open only if its file is still there; the payload is
+    /// not re-read, so a list refresh does not throw away edits in progress.
+    pub fn rescan(&mut self) {
+        self.error = None;
+        if self.dir.as_os_str().is_empty() {
+            // No folder chosen yet; do not report that "" cannot be read.
+            self.slots.clear();
+            self.open = None;
+            return;
+        }
+        self.slots = match scan_dir(&self.dir) {
+            Ok(slots) => slots,
+            Err(message) => {
+                self.error = Some(message);
+                Vec::new()
+            }
+        };
+        let open_path = self.open.as_ref().map(|open| open.entry.data_path.clone());
+        if let Some(path) = open_path {
+            if !self.slots.iter().any(|entry| entry.data_path == path) {
+                self.open = None;
+            }
+        }
+    }
+
+    /// Open the slot at `index` in the folder listing.
+    pub fn select(&mut self, index: usize) {
+        let Some(entry) = self.slots.get(index).cloned() else { return };
+        if self.open.as_ref().is_some_and(|open| open.entry.data_path == entry.data_path) {
+            return;
+        }
+        self.open = match SaveBundle::load(&entry.data_path, self.keys.clone()) {
+            Ok(bundle) => {
+                let info = bundle.info();
+                let (currencies, currencies_error) = match bundle.currencies() {
+                    Ok(currencies) => (Some(currencies), None),
+                    Err(error) => (None, Some(error.to_string())),
+                };
+                let known = KnownList::ALL
+                    .into_iter()
+                    .filter_map(|list| bundle.known(list).ok().map(|ids| (list, ids.len())))
+                    .collect();
+                Some(OpenSave {
+                    entry,
+                    info,
+                    bundle,
+                    currencies,
+                    currencies_error,
+                    inventories: Vec::new(),
+                    known,
+                })
+            }
+            Err(error) => {
+                self.error = Some(format!("{}: {error}", entry.data_path.display()));
+                None
+            }
+        };
+        if let Some(open) = self.open.as_mut() {
+            open.inventories = open.bundle.inventories();
+        }
+    }
+}
+
+/// List the save slots in a folder, ordered by slot number.
+pub fn scan_dir(dir: &Path) -> Result<Vec<SlotEntry>, String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    let mut slots = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(slot) = Slot::from_file_name(&name) else { continue };
+        if slot.player_number().is_none() {
+            // `accountdata.hg` and `usersettings.hg` are settings, not saves.
+            continue;
+        }
+        let metadata_path = path.with_file_name(slot.metadata_file_name());
+        let modified = std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+        let (summary, problem) = match read_summary(&metadata_path, slot) {
+            Ok(mut summary) => {
+                summary.modified = modified;
+                (Some(summary), None)
+            }
+            Err(message) => (None, Some(message)),
+        };
+        slots.push(SlotEntry { slot, data_path: path, summary, problem });
+    }
+    slots.sort_by_key(|entry| entry.slot.index());
+    Ok(slots)
+}
+
+fn read_summary(path: &Path, slot: Slot) -> Result<SlotSummary, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let metadata = Metadata::read(&bytes, slot).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(SlotSummary {
+        save_name: metadata.save_name(),
+        location: metadata.location(),
+        game_mode: metadata.game_mode(),
+        play_time: metadata.play_time,
+        version: metadata.version,
+        modified: None,
+    })
+}
+
+/// The key map the CLI would load (`--mapping` has no GUI equivalent yet, so
+/// the environment and config locations are used).
+fn default_key_map() -> Result<KeyMap, String> {
+    let path = std::env::var("NMSEDIT_MAPPING")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(default_mapping_path);
+    match path {
+        Some(path) if path.is_file() => {
+            let loaded = KeyMap::load(&path).map_err(|e| format!("mapping {}: {e}", path.display()))?;
+            Ok(KeyMap::builtin().extended_with(&loaded))
+        }
+        _ => Err("no community key mapping found; field and inventory names will be limited \
+                  (set NMSEDIT_MAPPING or install ~/.config/nmsedit/mapping.json)"
+            .to_string()),
+    }
+}
+
+fn default_mapping_path() -> Option<PathBuf> {
+    let base = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(value) if !value.is_empty() => PathBuf::from(value),
+        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
+    };
+    Some(base.join("nmsedit").join("mapping.json"))
+}
+
+/// The data pack the CLI would use, when one has been generated.
+fn default_pack() -> Result<Option<DataPack>, String> {
+    let path = std::env::var("NMSEDIT_PACK")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(DataPack::default_path);
+    let Some(path) = path else { return Ok(None) };
+    if !path.is_file() {
+        return Err(format!(
+            "no data pack at {}; run `nmsedit data refresh` to name items",
+            path.display()
+        ));
+    }
+    DataPack::load(&path).map(Some).map_err(|e| format!("data pack {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const SAVE: &str = r#"{
+        "Version": 4743,
+        "Platform": "Win|Final",
+        "ActiveContext": "Main",
+        "BaseContext": {
+            "PlayerStateData": {
+                "Units": 1200,
+                "Nanites": 40,
+                "Specials": 7,
+                "Inventory": {
+                    "Slots": [
+                        {"Type":{"InventoryType":"Substance"},"Id":"^CARBON","Amount":10,"MaxAmount":20,"DamageFactor":0.0,"FullyInstalled":true,"AddedAutomatically":false,"Index":{"X":0,"Y":0}}
+                    ],
+                    "ValidSlotIndices": [{"X":0,"Y":0},{"X":1,"Y":0}],
+                    "Class": {"InventoryClass": "C"},
+                    "StackSizeGroup": {"InventoryStackSizeGroup": "Personal"},
+                    "Width": 2,
+                    "Height": 1
+                },
+                "KnownProducts": ["^A", "^B"],
+                "KnownTech": [],
+                "KnownSpecials": [],
+                "SeenBaseBuildingObjects": [],
+                "KnownRefinerRecipes": []
+            }
+        }
+    }"#;
+
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+
+    /// A scratch directory removed when the test's guard is dropped.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("nmsedit-gui-{}-{}-{unique}", std::process::id(), name));
+            std::fs::create_dir_all(&path).expect("create scratch directory");
+            Scratch(path)
+        }
+
+        fn write(&self, name: &str, contents: &[u8]) {
+            std::fs::write(self.0.join(name), contents).expect("write scratch file");
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn session(dir: &Path) -> Session {
+        Session::open_dir_with(dir, KeyMap::builtin(), None, Vec::new())
+    }
+
+    #[test]
+    fn a_folder_listing_finds_saves_and_ignores_everything_else() {
+        let scratch = Scratch::new("listing");
+        scratch.write("save2.hg", SAVE.as_bytes());
+        scratch.write("save10.hg", SAVE.as_bytes());
+        scratch.write("save.hg", SAVE.as_bytes());
+        scratch.write("accountdata.hg", SAVE.as_bytes());
+        scratch.write("mf_save2.hg", b"not metadata");
+        scratch.write("notes.txt", b"hello");
+
+        let session = session(&scratch.0);
+        assert_eq!(session.error, None);
+        let names: Vec<String> =
+            session.slots.iter().map(|entry| entry.data_path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["save.hg", "save2.hg", "save10.hg"], "player saves are ordered by slot number");
+
+        // The metadata file is not real, so the summary is missing and the
+        // problem is kept for display rather than hidden.
+        assert!(session.slots[0].summary.is_none());
+        assert!(session.slots[0].problem.is_some());
+        assert_eq!(session.slots[0].title(), "PlayerState1");
+        assert_eq!(session.slots[0].subtitle(), "metadata could not be read");
+    }
+
+    #[test]
+    fn opening_a_slot_reads_the_player_state() {
+        let scratch = Scratch::new("open");
+        scratch.write("save2.hg", SAVE.as_bytes());
+
+        let mut session = session(&scratch.0);
+        session.select(0);
+        let open = session.open.as_ref().expect("the save opens");
+
+        let currencies = open.currencies.expect("currencies");
+        assert_eq!(currencies.units, 1200);
+        assert_eq!(currencies.nanites, 40);
+        assert_eq!(currencies.quicksilver, 7);
+
+        assert_eq!(open.info.version, Some(4743));
+        assert_eq!(open.info.platform.as_deref(), Some("Win|Final"));
+        assert_eq!(open.inventories.len(), 1);
+        assert_eq!(open.inventories[0].slots.len(), 1);
+        assert_eq!(open.inventories[0].slots[0].id, "^CARBON");
+
+        let known: Vec<(KnownList, usize)> = open.known.clone();
+        assert!(known.contains(&(KnownList::Products, 2)));
+        assert!(known.contains(&(KnownList::Technology, 0)));
+    }
+
+    #[test]
+    fn selecting_the_open_slot_again_keeps_the_loaded_save() {
+        let scratch = Scratch::new("reselect");
+        scratch.write("save2.hg", SAVE.as_bytes());
+        let mut session = session(&scratch.0);
+        session.select(0);
+        session.select(0);
+        assert!(session.open.is_some());
+    }
+
+    #[test]
+    fn a_rescan_keeps_the_open_save_while_its_file_exists() {
+        let scratch = Scratch::new("rescan");
+        scratch.write("save2.hg", SAVE.as_bytes());
+        let mut session = session(&scratch.0);
+        session.select(0);
+
+        session.rescan();
+        assert_eq!(session.slots.len(), 1);
+        assert!(session.open.is_some(), "a plain refresh must not close the save");
+
+        std::fs::remove_file(scratch.0.join("save2.hg")).expect("remove the save");
+        session.rescan();
+        assert!(session.open.is_none(), "a save that disappeared is closed");
+    }
+
+    #[test]
+    fn rescanning_before_a_folder_is_chosen_reports_nothing() {
+        let mut session = Session::empty();
+        session.rescan();
+        assert_eq!(session.error, None);
+        assert!(session.slots.is_empty());
+    }
+
+    #[test]
+    fn a_missing_folder_is_reported_and_lists_nothing() {
+        let missing = std::env::temp_dir().join("nmsedit-gui-does-not-exist");
+        let session = Session::open_dir_with(&missing, KeyMap::builtin(), None, Vec::new());
+        assert!(session.error.is_some());
+        assert!(session.slots.is_empty());
+    }
+
+    #[test]
+    fn durations_are_hours_minutes_seconds() {
+        assert_eq!(format_duration(0), "0:00:00");
+        assert_eq!(format_duration(3661), "1:01:01");
+        assert_eq!(format_duration(3_156_876), "876:54:36");
+    }
+}

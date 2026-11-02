@@ -4,7 +4,7 @@ A No Man's Sky save editor, written in Rust.
 
 **Status: early.** The format layer is complete and verified against real saves;
 currencies, inventories and known-item lists are editable from the library and
-the CLI. There is no GUI yet.
+the CLI, and a desktop GUI browses saves, balances and inventory grids.
 
 ## Why another one
 
@@ -104,6 +104,23 @@ Every balance is limited to the game's own 32-bit range, `--dry-run` plans an
 edit without writing, and a refused edit (a full grid, an occupied cell, an
 amount the slot cannot hold) leaves the save untouched.
 
+## GUI
+
+```sh
+cargo run --release -p nms-gui -- /path/to/HelloGames/NMS/st_<id>
+```
+
+The slot list is built from the metadata files, so every save shows its name,
+game mode, location and play time without decompressing anything. Opening a
+slot adds the save version, balances, known-item counts and every inventory the
+player state carries; the inventory tab draws the grid the game draws, with item
+names from the data pack and per-slot details on click.
+
+This slice is **read-only**: the window never writes, so it is safe to point at
+a live save folder. Without a community key mapping the inventory fields fall
+back to their on-disk names, and without a data pack the item names are absent;
+the window says so in both cases.
+
 ## Guarantees
 
 Verified against 62 real files from a live 7.x save set:
@@ -152,6 +169,7 @@ crates/nms-edit     load/edit/plan/commit, metadata mirroring, backups, player s
 crates/nms-pak      HGPAK reader for the game's own .pak archives
 crates/nms-data     regenerates game text from a local installation
 crates/nms-cli      the nmsedit binary
+crates/nms-gui      the nmsedit-gui window (egui/eframe)
 docs/format         the format notes this implementation is built from
 tools/              fixture and data-pipeline scripts
 ```
@@ -162,6 +180,7 @@ tools/              fixture and data-pipeline scripts
 cargo test --workspace              # unit tests always run
 tools/fetch-fixtures.sh <save.zip>  # then the fixture tests run too
 cargo run -p nms-cli -- info <save.hg>
+cargo run -p nms-gui -- <save-dir>   # or --release for a usable window
 ```
 
 Fixture tests exercise real saves and skip with a message when none are
@@ -175,7 +194,7 @@ present. See [`fixtures/README.md`](fixtures/README.md).
 | **M2 (done)** | edit/commit with backups, metadata mirroring, change reports, readable export, restore |
 | **M3 (done)** | game data pipeline — 84,965 strings regenerated in 137 ms, item names joined from three item tables (94% of a real save's ids named, every answer labelled with its source), and item categories verified against the save's own inventory types |
 | **M4 (done)** | player state: currencies, inventory grids and slots, known-item lists — library and CLI, with the measured invariants in [`docs/format/player-state.md`](docs/format/player-state.md) |
-| M5 | GUI (`egui`): inventory grids, JSON editor, slot list from metadata |
+| **M5 (in progress)** | GUI (`egui`): slot browser, save summary and read-only inventory grids are done; editing and the JSON view are next |
 | M6 | other platforms: Xbox Game Pass, PS4, Switch |
 | M7 | entity export/import, reward-claim correctness, coordinate tooling |
 
