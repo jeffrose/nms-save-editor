@@ -130,6 +130,11 @@ struct EditState {
     currency_inputs: [String; 3],
     /// One text box per [`SuitStat::ALL`] entry.
     stat_inputs: [String; 3],
+    /// Grid size the resize controls hold for the selected inventory.
+    grid_width: String,
+    grid_height: String,
+    /// Whether a resize past the measured grid is allowed for this edit.
+    beyond_vanilla: bool,
     amount_input: String,
     add_id: String,
     add_amount: String,
@@ -146,6 +151,9 @@ impl Default for EditState {
             selected_slot: None,
             currency_inputs: Default::default(),
             stat_inputs: Default::default(),
+            grid_width: String::new(),
+            grid_height: String::new(),
+            beyond_vanilla: false,
             amount_input: String::new(),
             add_id: String::new(),
             add_amount: String::new(),
@@ -171,6 +179,10 @@ impl EditState {
             for (index, stat) in SuitStat::ALL.iter().enumerate() {
                 self.stat_inputs[index] = stats.get(*stat).to_string();
             }
+        }
+        if let Some(inventory) = open.inventories.get(self.selected_inventory) {
+            self.grid_width = inventory.width.to_string();
+            self.grid_height = inventory.height.to_string();
         }
         let still_there = self.selected_slot.is_some_and(|position| {
             open.inventories
@@ -276,6 +288,17 @@ enum Action {
         inventory: usize,
         position: usize,
         cell: Cell,
+    },
+    /// Change an inventory's grid size.
+    ResizeInventory {
+        inventory: usize,
+        width: u64,
+        height: u64,
+        beyond_vanilla: bool,
+    },
+    /// Enable every slot of an inventory's grid.
+    UnlockAll {
+        inventory: usize,
     },
     /// Replace an existing value, addressed by exact on-disk path.
     SetField {
@@ -714,6 +737,10 @@ impl EditorApp {
                 self.session.remove_item(inventory, position)
             }
             Action::Move { inventory, position, cell } => self.session.move_item(inventory, position, cell),
+            Action::ResizeInventory { inventory, width, height, beyond_vanilla } => {
+                self.session.resize_inventory(inventory, width, height, beyond_vanilla)
+            }
+            Action::UnlockAll { inventory } => self.session.unlock_all_slots(inventory),
             Action::SetField { steps, value } => self.session.set_field(&steps, value),
             Action::KnownAdd { list, id } => self.session.known_add(list, &id),
             Action::KnownRemove { list, id } => self.session.known_remove(list, &id),
@@ -1637,6 +1664,9 @@ fn inventories_tab(
                     if edit.selected_inventory != index {
                         edit.selected_inventory = index;
                         edit.clear_slot();
+                        edit.grid_width = inventory.width.to_string();
+                        edit.grid_height = inventory.height.to_string();
+                        edit.beyond_vanilla = false;
                     }
                 }
             }
@@ -1677,6 +1707,57 @@ fn inventories_tab(
         );
     }
     ui.add_space(6.0);
+
+    // Grid controls: resize and unlock. Both are staged like every other edit,
+    // and a resize past the game's own grids needs the opt-in.
+    if editable && inventory.role == InventoryRole::Player {
+        let measured = nms_edit::measured_grid(&inventory.stack_group);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Grid").small().strong());
+            ui.add(egui::TextEdit::singleline(&mut edit.grid_width).desired_width(38.0));
+            ui.label("x");
+            ui.add(egui::TextEdit::singleline(&mut edit.grid_height).desired_width(38.0));
+            let width = edit.grid_width.trim().parse::<u64>().ok();
+            let height = edit.grid_height.trim().parse::<u64>().ok();
+            let beyond = match (measured, width, height) {
+                (Some((measured_width, measured_height)), Some(width), Some(height)) => {
+                    width > measured_width || height > measured_height
+                }
+                _ => false,
+            };
+            if beyond {
+                if let Some((measured_width, measured_height)) = measured {
+                    ui.checkbox(&mut edit.beyond_vanilla, "beyond vanilla").on_hover_text(format!(
+                        "the game's own grids for this kind are {measured_width}x{measured_height}"
+                    ));
+                }
+            }
+            let changed = width != Some(inventory.width) || height != Some(inventory.height);
+            let can_resize =
+                changed && width.is_some() && height.is_some() && (!beyond || edit.beyond_vanilla);
+            if ui.add_enabled(can_resize, egui::Button::new("Resize")).clicked() {
+                if let (Some(width), Some(height)) = (width, height) {
+                    action = Some(Action::ResizeInventory {
+                        inventory: edit.selected_inventory,
+                        width,
+                        height,
+                        beyond_vanilla: edit.beyond_vanilla,
+                    });
+                }
+            }
+            let enabled = inventory.valid_cells.len() as u64;
+            let total = inventory.width * inventory.height;
+            let locked = total.saturating_sub(enabled);
+            if ui
+                .add_enabled(locked > 0, egui::Button::new(format!("Unlock all ({locked})")))
+                .on_hover_text("enables every cell of the grid the game already writes")
+                .clicked()
+            {
+                action = Some(Action::UnlockAll { inventory: edit.selected_inventory });
+            }
+        });
+        ui.add_space(4.0);
+    }
 
     if editable {
         if let Some(add) = add_item_form(ui, edit, pack) {
@@ -2632,6 +2713,29 @@ mod tests {
         let open = app.session.open.as_ref().expect("open");
         assert_eq!(open.suit_stats.expect("stats").health, 333);
         assert!(app.session.dirty(), "a staged stat must mark the save dirty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_grid_controls_stage_a_resize_and_an_unlock() {
+        let dir = scratch("grid");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Inventories;
+
+        let text = drawn_text(&mut app);
+        for expected in ["Grid", "Resize", "Unlock all"] {
+            assert!(text.contains(expected), "the grid controls should draw {expected:?}:\n{text}");
+        }
+
+        // The synthetic save's suit grid is 2x1; grow it and enable the new cells.
+        app.apply(Action::ResizeInventory { inventory: 0, width: 2, height: 2, beyond_vanilla: false });
+        app.apply(Action::UnlockAll { inventory: 0 });
+        let open = app.session.open.as_ref().expect("open");
+        assert_eq!((open.inventories[0].width, open.inventories[0].height), (2, 2));
+        assert_eq!(open.inventories[0].valid_cells.len(), 4);
+        assert!(app.session.dirty(), "staged grid changes must mark the save dirty");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -66,6 +66,12 @@ derives one from your own game; --mapping overrides it):
                                            in the player's inventories
     nmsedit move-item <save.hg> <inv> <slot> <x> <y>
                                            move a slot to another grid cell
+    nmsedit resize <save.hg> <inv> <width> <height>
+                                           change an inventory's grid size;
+                                           past the game's own grids needs
+                                           --beyond-vanilla
+    nmsedit unlock <save.hg> <inv>         enable every slot in an inventory's
+                                           grid
     nmsedit known <save.hg> [list]         list learned ids (products, technology,
                                            specials, base-parts, refiner-recipes)
     nmsedit known-add <save.hg> <list> <id>
@@ -165,6 +171,8 @@ fn main() -> ExitCode {
         Some("set-amount") => run(&args, cmd_set_amount),
         Some("repair") => run(&args, cmd_repair),
         Some("move-item") => run(&args, cmd_move_item),
+        Some("resize") => run(&args, cmd_resize),
+        Some("unlock") => run(&args, cmd_unlock),
         Some("known") => run(&args, cmd_known),
         Some("known-add") => run(&args, cmd_known_edit),
         Some("known-remove") => run(&args, cmd_known_edit),
@@ -721,6 +729,47 @@ fn cmd_repair(args: &[String]) -> Result<(), String> {
         }
         _ => return Err(format!("pass either no inventory, or an inventory and a slot index\n\n{USAGE}")),
     }
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+/// Change an inventory's grid size.
+fn cmd_resize(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let width = positional.get(2).ok_or_else(|| format!("missing width\n\n{USAGE}"))?;
+    let height = positional.get(3).ok_or_else(|| format!("missing height\n\n{USAGE}"))?;
+    let width: u64 = width.parse().map_err(|_| format!("width must be a whole number, got {width:?}"))?;
+    let height: u64 = height.parse().map_err(|_| format!("height must be a whole number, got {height:?}"))?;
+    let beyond = flag(args, "--beyond-vanilla");
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+    let (before_width, before_height) = (inventory.width, inventory.height);
+    if !bundle.resize_inventory(&inventory.path, width, height, beyond).map_err(|e| e.to_string())? {
+        println!("{} is already {width}x{height}, nothing to do", inventory.path);
+        return Ok(());
+    }
+    println!("{}: grid {}x{} -> {width}x{height}", inventory.path, before_width, before_height);
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+/// Enable every slot of an inventory's grid.
+fn cmd_unlock(args: &[String]) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let inventory = inventory_or_error(&bundle, name)?;
+    let added = bundle.unlock_all_slots(&inventory.path).map_err(|e| e.to_string())?;
+    if added == 0 {
+        println!("every slot in {} is already enabled", inventory.path);
+        return Ok(());
+    }
+    println!("{}: enabled {added} slot(s)", inventory.path);
     commit_and_report(args, &mut bundle, &data_path)
 }
 

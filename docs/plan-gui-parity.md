@@ -5,6 +5,13 @@ available in nmsedit's window, with the interface improvements its users have
 asked for, and the same operations exposed through the library, the CLI and the
 MCP server as they land.
 
+**Status.** G1 in progress: the exosuit stats and the inventory grid operations
+(resize, unlock, per-kind measured bounds) are in the library, the CLI (`suit`,
+`resize`, `unlock`), the MCP (`read_suit_stats`, `set_suit_stat`,
+`resize_inventory`) and the window (grouped navigation, Suit page, grid
+controls). Next in G1: move between inventories, clone, the item picker, and a
+staged-change preview.
+
 ## What the reference is, and what we may take from it
 
 The original is a Java application. Its repository publishes **binaries only**

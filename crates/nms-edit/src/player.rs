@@ -425,6 +425,43 @@ impl NewItem {
     }
 }
 
+/// The largest grid this project has measured for a kind of inventory.
+///
+/// Measured from the 30-save reference corpus, where a kind whose grid was
+/// **fully unlocked** in at least one save shows the game's own size: the
+/// suit's main grid at 120/120 (10x12), technology at 60/60 (10x6), storage
+/// chests at 60/60 (10x6), exocraft at 50/50 (10x5), the base capsule at
+/// 160/160 (10x16), and the ship and freighter grids at their 10x12 layouts.
+/// `None` means the corpus never showed the kind fully unlocked — the cargo
+/// grids were still growing (7x5, 8x5) — so only the structural bound below
+/// applies and the editor does not pretend to know the game's cap.
+///
+/// A resize past a known grid is refused unless the caller asks for it
+/// explicitly: the game's own UI cannot address the extra cells, and the
+/// original editor's documentation warns that resizing past the vanilla grid
+/// can break the save.
+pub fn measured_grid(stack_group: &str) -> Option<(u64, u64)> {
+    match stack_group {
+        "Personal" => Some((10, 12)),
+        "Default" => Some((10, 6)),
+        "Chest" => Some((10, 6)),
+        "Vehicle" => Some((10, 5)),
+        "BaseCapsule" => Some((10, 16)),
+        "SeasonTransfer" => Some((8, 4)),
+        "Ship" => Some((10, 12)),
+        "Freighter" => Some((10, 12)),
+        _ => None,
+    }
+}
+
+/// The largest grid the editor will write for any kind, from the corpus.
+///
+/// No container in the 30-save corpus is wider than 16 columns or taller than
+/// 16 rows (the widest is a machine container at 16x16, the tallest the base
+/// capsule at 10x16), so a grid past that is refused outright rather than
+/// gated: it is not a shape the game writes at all.
+pub const MAX_GRID_SIDE: u64 = 16;
+
 // ---------------------------------------------------------------------------
 // errors
 // ---------------------------------------------------------------------------
@@ -447,6 +484,65 @@ pub enum PlayerError {
         max: i64,
         /// The refused value.
         value: i64,
+    },
+
+    /// A grid size the editor will not write.
+    #[error("{inventory}: {width}x{height} is not a grid the editor can write ({reason})")]
+    BadGrid {
+        /// Inventory label.
+        inventory: String,
+        /// Requested columns.
+        width: u64,
+        /// Requested rows.
+        height: u64,
+        /// Why it was refused.
+        reason: &'static str,
+    },
+
+    /// A cell outside the inventory's grid.
+    #[error("{inventory}: {cell} is outside the {width}x{height} grid")]
+    CellOutsideGrid {
+        /// Inventory label.
+        inventory: String,
+        /// The cell.
+        cell: Cell,
+        /// Grid columns.
+        width: u64,
+        /// Grid rows.
+        height: u64,
+    },
+
+    /// A slot would fall outside the grid a resize asks for.
+    #[error("{inventory}: slot {position} sits at {cell} and would fall outside a {width}x{height} grid")]
+    SlotOutsideGrid {
+        /// Inventory label.
+        inventory: String,
+        /// Slot array index.
+        position: usize,
+        /// The slot's cell.
+        cell: Cell,
+        /// Requested columns.
+        width: u64,
+        /// Requested rows.
+        height: u64,
+    },
+
+    /// The requested grid is larger than the game's own grids for this kind.
+    #[error(
+        "{inventory}: {width}x{height} is beyond the {measured_width}x{measured_height} the game \
+         writes for this kind of inventory; resizing past it can break the save"
+    )]
+    BeyondMeasuredGrid {
+        /// Inventory label.
+        inventory: String,
+        /// Requested columns.
+        width: u64,
+        /// Requested rows.
+        height: u64,
+        /// Largest columns measured for the kind.
+        measured_width: u64,
+        /// Largest rows measured for the kind.
+        measured_height: u64,
     },
 
     /// The requested inventory does not exist.
@@ -542,6 +638,18 @@ fn named<'a>(value: &'a Value, keys: &KeyMap, name: &str) -> Option<(&'a str, &'
 /// The on-disk key to create a field under.
 fn creation_key(keys: &KeyMap, name: &str) -> String {
     keys.candidates(name).last().unwrap_or(name).to_string()
+}
+
+/// The `ValidSlotIndices` array for a list of cells, in display order.
+fn valid_cells_value(keys: &KeyMap, cells: &[Cell]) -> Value {
+    let mut array = Vec::with_capacity(cells.len());
+    for cell in cells {
+        let mut index = Map::new();
+        index.insert(creation_key(keys, "X"), Value::from(cell.x));
+        index.insert(creation_key(keys, "Y"), Value::from(cell.y));
+        array.push(Value::Object(index));
+    }
+    Value::Array(array)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1201,6 +1309,197 @@ impl SaveBundle {
         Ok(true)
     }
 
+    /// Every cell of an inventory's grid that is not enabled yet.
+    pub fn locked_cells(&self, path: &InventoryPath) -> Result<Vec<Cell>, PlayerError> {
+        let inventory = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *path)
+            .ok_or_else(|| PlayerError::UnknownInventory(path.label().to_string()))?;
+        let mut locked = Vec::new();
+        for y in 0..inventory.height {
+            for x in 0..inventory.width {
+                let cell = Cell::new(x, y);
+                if !inventory.valid_cells.contains(&cell) {
+                    locked.push(cell);
+                }
+            }
+        }
+        Ok(locked)
+    }
+
+    /// Enable or disable one cell of an inventory's grid.
+    ///
+    /// Disabling a cell that holds an item is refused: the item would fall
+    /// outside the usable grid. A container whose `ValidSlotIndices` is empty
+    /// (the game's "the whole grid is usable", used by the cargo grids and the
+    /// machine-owned containers) becomes explicit on the first change.
+    pub fn set_slot_enabled(
+        &mut self,
+        path: &InventoryPath,
+        cell: Cell,
+        enabled: bool,
+    ) -> Result<bool, PlayerError> {
+        let inventory = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *path)
+            .ok_or_else(|| PlayerError::UnknownInventory(path.label().to_string()))?;
+        if cell.x >= inventory.width || cell.y >= inventory.height {
+            return Err(PlayerError::CellOutsideGrid {
+                inventory: path.label().to_string(),
+                cell,
+                width: inventory.width,
+                height: inventory.height,
+            });
+        }
+        if inventory.valid_cells.contains(&cell) == enabled {
+            return Ok(false);
+        }
+        if !enabled {
+            if let Some(other) = inventory.slots.iter().find(|slot| slot.cell == cell) {
+                return Err(PlayerError::CellOccupied {
+                    inventory: path.label().to_string(),
+                    cell,
+                    position: other.position,
+                });
+            }
+        }
+        let mut cells = inventory.valid_cells.clone();
+        if enabled {
+            cells.push(cell);
+        } else {
+            cells.retain(|existing| *existing != cell);
+        }
+        cells.sort_by_key(|cell| (cell.y, cell.x));
+        self.write_valid_cells(path, &cells)?;
+        Ok(true)
+    }
+
+    /// Enable every cell of an inventory's grid; returns how many were added.
+    pub fn unlock_all_slots(&mut self, path: &InventoryPath) -> Result<usize, PlayerError> {
+        let inventory = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *path)
+            .ok_or_else(|| PlayerError::UnknownInventory(path.label().to_string()))?;
+        let mut cells = inventory.valid_cells.clone();
+        let before = cells.len();
+        for y in 0..inventory.height {
+            for x in 0..inventory.width {
+                let cell = Cell::new(x, y);
+                if !cells.contains(&cell) {
+                    cells.push(cell);
+                }
+            }
+        }
+        if cells.len() == before {
+            return Ok(0);
+        }
+        cells.sort_by_key(|cell| (cell.y, cell.x));
+        self.write_valid_cells(path, &cells)?;
+        Ok(cells.len() - before)
+    }
+
+    /// Change an inventory's grid size.
+    ///
+    /// The valid cells that fall outside a smaller grid are dropped; a larger
+    /// grid starts with the cells it had, and the new cells stay locked until
+    /// [`SaveBundle::unlock_all_slots`]. A container whose `ValidSlotIndices`
+    /// is empty keeps it empty, because that is how the game writes "the whole
+    /// grid is usable".
+    ///
+    /// `beyond_measured` allows a grid larger than [`measured_grid`] returns
+    /// for the inventory's kind. The game's own UI cannot address cells past
+    /// its grids, and the original editor's documentation warns that resizing
+    /// past them can break a save, so the caller has to ask for it.
+    pub fn resize_inventory(
+        &mut self,
+        path: &InventoryPath,
+        width: u64,
+        height: u64,
+        beyond_measured: bool,
+    ) -> Result<bool, PlayerError> {
+        let inventory = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *path)
+            .ok_or_else(|| PlayerError::UnknownInventory(path.label().to_string()))?;
+        let label = path.label().to_string();
+        if width == 0 || height == 0 {
+            return Err(PlayerError::BadGrid {
+                inventory: label,
+                width,
+                height,
+                reason: "a grid needs at least one cell",
+            });
+        }
+        if width > MAX_GRID_SIDE || height > MAX_GRID_SIDE {
+            return Err(PlayerError::BadGrid {
+                inventory: label,
+                width,
+                height,
+                reason: "no container the game writes is larger than 16x16",
+            });
+        }
+        if !beyond_measured {
+            if let Some((measured_width, measured_height)) = measured_grid(&inventory.stack_group) {
+                if width > measured_width || height > measured_height {
+                    return Err(PlayerError::BeyondMeasuredGrid {
+                        inventory: label,
+                        width,
+                        height,
+                        measured_width,
+                        measured_height,
+                    });
+                }
+            }
+        }
+        if let Some(slot) =
+            inventory.slots.iter().find(|slot| slot.cell.x >= width || slot.cell.y >= height)
+        {
+            return Err(PlayerError::SlotOutsideGrid {
+                inventory: label,
+                position: slot.position,
+                cell: slot.cell,
+                width,
+                height,
+            });
+        }
+        if width == inventory.width && height == inventory.height {
+            return Ok(false);
+        }
+
+        let kept: Vec<Cell> = inventory
+            .valid_cells
+            .iter()
+            .copied()
+            .filter(|cell| cell.x < width && cell.y < height)
+            .collect();
+        let clipped = kept.len() != inventory.valid_cells.len();
+
+        let tree = self.document.tree_raw_mut();
+        let container = resolve_mut(tree, &path.steps)
+            .ok_or_else(|| PlayerError::UnknownInventory(path.label().to_string()))?;
+        set_field(container, &self.keys, "Width", Value::from(width));
+        set_field(container, &self.keys, "Height", Value::from(height));
+        if clipped {
+            set_field(container, &self.keys, "ValidSlotIndices", valid_cells_value(&self.keys, &kept));
+        }
+        self.document.mark_dirty();
+        Ok(true)
+    }
+
+    /// Write an inventory's whole valid-cell list, in the game's display order.
+    fn write_valid_cells(&mut self, path: &InventoryPath, cells: &[Cell]) -> Result<(), PlayerError> {
+        let tree = self.document.tree_raw_mut();
+        let container = resolve_mut(tree, &path.steps)
+            .ok_or_else(|| PlayerError::UnknownInventory(path.label().to_string()))?;
+        set_field(container, &self.keys, "ValidSlotIndices", valid_cells_value(&self.keys, cells));
+        self.document.mark_dirty();
+        Ok(())
+    }
+
     // -- knowledge lists ---------------------------------------------------
 
     /// The ids in one of the "known" lists.
@@ -1533,6 +1832,81 @@ mod tests {
         let mut fresh = bundle(SAVE);
         assert!(!fresh.set_suit_stat(SuitStat::Shield, 100).expect("no-op"));
         assert!(!fresh.document.is_dirty());
+    }
+
+    #[test]
+    fn unlocking_slots_enables_the_rest_of_the_grid() {
+        let json = SAVE.replace(
+            r#""ValidSlotIndices": [{"X":0,"Y":0},{"X":1,"Y":0},{"X":0,"Y":1},{"X":1,"Y":1}]"#,
+            r#""ValidSlotIndices": [{"X":0,"Y":0},{"X":1,"Y":0}]"#,
+        );
+        let mut save = bundle(&json);
+        let path = save.inventories()[0].path.clone();
+        assert_eq!(save.locked_cells(&path).unwrap(), vec![Cell::new(0, 1), Cell::new(1, 1)]);
+        assert_eq!(save.unlock_all_slots(&path).unwrap(), 2);
+        assert!(save.locked_cells(&path).unwrap().is_empty());
+        assert_eq!(save.unlock_all_slots(&path).unwrap(), 0, "a second call changes nothing");
+
+        let reread = reload(&save);
+        let inventory = &reread.inventories()[0];
+        assert_eq!(
+            inventory.valid_cells,
+            vec![Cell::new(0, 0), Cell::new(1, 0), Cell::new(0, 1), Cell::new(1, 1)],
+            "written in the game's display order"
+        );
+    }
+
+    #[test]
+    fn disabling_an_occupied_cell_is_refused() {
+        let mut save = bundle(SAVE);
+        let path = save.inventories()[0].path.clone();
+        // (0,0) holds ^CARBON.
+        let error = save.set_slot_enabled(&path, Cell::new(0, 0), false).unwrap_err();
+        assert!(matches!(error, PlayerError::CellOccupied { .. }), "{error}");
+        assert!(!save.document.is_dirty(), "a refused edit leaves the document clean");
+        // An empty cell can be disabled; a cell outside the grid cannot.
+        assert!(save.set_slot_enabled(&path, Cell::new(0, 1), false).unwrap());
+        let error = save.set_slot_enabled(&path, Cell::new(9, 9), false).unwrap_err();
+        assert!(matches!(error, PlayerError::CellOutsideGrid { .. }), "{error}");
+    }
+
+    #[test]
+    fn resizing_a_grid_keeps_items_and_clips_valid_cells() {
+        let mut save = bundle(SAVE);
+        let path = save.inventories()[0].path.clone();
+        // Shrinking below an occupied cell is refused.
+        let error = save.resize_inventory(&path, 1, 1, false).unwrap_err();
+        assert!(matches!(error, PlayerError::SlotOutsideGrid { .. }), "{error}");
+        assert!(!save.document.is_dirty());
+
+        // Growing keeps the cells it had; the new ones stay locked.
+        assert!(save.resize_inventory(&path, 4, 4, false).unwrap());
+        let reread = reload(&save);
+        let inventory = &reread.inventories()[0];
+        assert_eq!((inventory.width, inventory.height), (4, 4));
+        assert_eq!(inventory.valid_cells.len(), 4, "the new cells are locked");
+        assert_eq!(inventory.slots.len(), 2, "items survive");
+
+        // Shrinking to a grid that still holds everything drops the cells that
+        // fall outside it.
+        assert!(save.resize_inventory(&path, 2, 1, false).unwrap());
+        let reread = reload(&save);
+        let inventory = &reread.inventories()[0];
+        assert_eq!((inventory.width, inventory.height), (2, 1));
+        assert_eq!(inventory.valid_cells, vec![Cell::new(0, 0), Cell::new(1, 0)]);
+    }
+
+    #[test]
+    fn a_resize_past_the_measured_grid_needs_the_opt_in() {
+        let mut save = bundle(SAVE);
+        let path = save.inventories()[0].path.clone();
+        assert_eq!(measured_grid("Personal"), Some((10, 12)), "the suit's main grid");
+        let error = save.resize_inventory(&path, 11, 2, false).unwrap_err();
+        assert!(matches!(error, PlayerError::BeyondMeasuredGrid { .. }), "{error}");
+        assert!(save.resize_inventory(&path, 11, 2, true).unwrap(), "the opt-in allows it");
+        // A grid no container has is refused even with the opt-in.
+        let error = save.resize_inventory(&path, 17, 2, true).unwrap_err();
+        assert!(matches!(error, PlayerError::BadGrid { .. }), "{error}");
     }
 
     #[test]

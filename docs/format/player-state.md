@@ -101,6 +101,37 @@ The labels the editor prints are built from the on-disk path with the context an
 array indices**, not readable names, because a few readable names occur more than
 once in the community mapping.
 
+### Grid size and unlocking
+
+`Width`/`Height` are the grid's extent; `ValidSlotIndices` lists the cells the
+game has unlocked, in display order (row-major, measured across every container
+in the 30-save corpus). An **empty** `ValidSlotIndices` means the whole grid is
+usable — the cargo grids and the machine-owned containers write it that way —
+so the editor reads an empty list as every cell, and materialises the list only
+when an edit changes the set.
+
+The corpus also bounds what the editor writes:
+
+| Kind (`StackSizeGroup`) | Largest grid seen | How it was seen |
+|---|---|---|
+| `Personal` (suit main) | 10x12 | fully unlocked, 120/120 cells |
+| `Default` (technology grids) | 10x6 | fully unlocked, 60/60 |
+| `Chest` (base storage) | 10x6 | fully unlocked, 60/60 |
+| `Vehicle` (exocraft) | 10x5 | fully unlocked, 50/50 |
+| `BaseCapsule` | 10x16 | fully unlocked, 160/160 |
+| `Ship`, `Freighter` | 10x12 | the grid the save declares |
+| `SeasonTransfer` | 8x4 | fully unlocked, 32/32 |
+
+No container in the corpus is wider than 16 columns or taller than 16 rows (the
+widest is a machine container at 16x16), so a resize refuses anything larger
+outright; a grid past a kind's known size needs the caller's explicit opt-in,
+because the game's UI cannot address the extra cells and the original editor's
+documentation warns that a save can break. The cargo grids (`PersonalCargo`,
+`ShipCargo`, `FreighterCargo`) were still growing in the corpus (7x5, 8x5), so
+no size is claimed for them — only the structural bound applies. The game's own
+capacity table (`metadata/reality/tables/inventorytable.mbin`) is the eventual
+source for exact caps.
+
 ## Slots
 
 ```json

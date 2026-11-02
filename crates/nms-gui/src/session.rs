@@ -518,6 +518,48 @@ impl Session {
         Ok(if moved { format!("moved to {cell}") } else { "that slot is already there".to_string() })
     }
 
+    /// Stage a grid resize. Nothing is written until [`Session::save`].
+    pub fn resize_inventory(
+        &mut self,
+        inventory: usize,
+        width: u64,
+        height: u64,
+        beyond_vanilla: bool,
+    ) -> Result<String, String> {
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let current = open.inventories.get(inventory).ok_or_else(|| "no such inventory".to_string())?;
+        let path = current.path.clone();
+        let (before_width, before_height) = (current.width, current.height);
+        let resized = open
+            .bundle
+            .resize_inventory(&path, width, height, beyond_vanilla)
+            .map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(if resized {
+            format!("grid {before_width}x{before_height} -> {width}x{height}")
+        } else {
+            format!("the grid is already {width}x{height}")
+        })
+    }
+
+    /// Stage enabling every cell of an inventory's grid.
+    pub fn unlock_all_slots(&mut self, inventory: usize) -> Result<String, String> {
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let path = open
+            .inventories
+            .get(inventory)
+            .ok_or_else(|| "no such inventory".to_string())?
+            .path
+            .clone();
+        let added = open.bundle.unlock_all_slots(&path).map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(if added == 0 {
+            "every slot in that grid is already enabled".to_string()
+        } else {
+            format!("enabled {added} slot(s)")
+        })
+    }
+
     /// Render an on-disk path for display, using readable names where known.
     pub fn path_label(&self, steps: &[RawStep]) -> String {
         describe_raw_path(steps, &self.keys)

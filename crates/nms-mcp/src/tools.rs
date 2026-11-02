@@ -179,6 +179,22 @@ pub fn definitions() -> Vec<Value> {
             &["save"],
         ),
         tool(
+            "resize_inventory",
+            "Change an inventory's grid size, and optionally enable every slot in it. The game's \
+             own UI only addresses the grid it writes for each kind of inventory, so a larger one \
+             needs beyond_vanilla=true and can break the save; the tool refuses it otherwise. \
+             Items that would fall outside a smaller grid are refused too.",
+            json!({
+                "save": save_prop(),
+                "inventory": string_prop("Inventory name from list_inventories"),
+                "width": integer_prop("New columns, 1 to 16"),
+                "height": integer_prop("New rows, 1 to 16"),
+                "unlock_all": bool_prop("Also enable every slot in the grid"),
+                "beyond_vanilla": bool_prop("Allow a grid larger than the game writes for this kind"),
+            }),
+            &["save", "inventory", "width", "height"],
+        ),
+        tool(
             "known_add",
             "Mark an id as learned in one of the player's lists and commit. The list is created \
              only where the save already has it.",
@@ -266,6 +282,7 @@ pub fn call(server: &Server, name: &str, args: &Args) -> Option<Result<String, S
         "set_item_amount" => set_item_amount(server, args),
         "remove_item" => remove_item(server, args),
         "repair_all" => repair_all(server, args),
+        "resize_inventory" => resize_inventory(server, args),
         "known_add" => known_edit(server, args, true),
         "known_remove" => known_edit(server, args, false),
         "set_field" => set_field(server, args),
@@ -364,6 +381,10 @@ fn arg_u32(args: &Args, name: &str) -> Result<u32, String> {
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("missing integer argument {name:?}"))?;
     u32::try_from(value).map_err(|_| format!("{name} must be 0..={}", u32::MAX))
+}
+
+fn arg_u64(args: &Args, name: &str) -> Result<u64, String> {
+    args.get(name).and_then(Value::as_u64).ok_or_else(|| format!("missing integer argument {name:?}"))
 }
 
 fn arg_bool(args: &Args, name: &str, default: bool) -> bool {
@@ -858,6 +879,35 @@ fn repair_all(server: &Server, args: &Args) -> Result<String, String> {
     })
 }
 
+fn resize_inventory(server: &Server, args: &Args) -> Result<String, String> {
+    ensure_mapping(server)?;
+    let save = arg_str(args, "save")?;
+    let name = arg_str(args, "inventory")?;
+    let width = arg_u64(args, "width")?;
+    let height = arg_u64(args, "height")?;
+    let unlock_all = arg_bool(args, "unlock_all", false);
+    let beyond_vanilla = arg_bool(args, "beyond_vanilla", false);
+    edit_and_commit(server, &save, |bundle| {
+        let inventory = bundle
+            .inventory(&name)
+            .ok_or_else(|| format!("no inventory named {name:?} (use list_inventories)"))?;
+        let (before_width, before_height) = (inventory.width, inventory.height);
+        let resized = bundle
+            .resize_inventory(&inventory.path, width, height, beyond_vanilla)
+            .map_err(|error| error.to_string())?;
+        let mut summary = if resized {
+            format!("{}: grid {}x{} -> {width}x{height}", inventory.path, before_width, before_height)
+        } else {
+            format!("{}: grid stays {width}x{height}", inventory.path)
+        };
+        if unlock_all {
+            let added = bundle.unlock_all_slots(&inventory.path).map_err(|error| error.to_string())?;
+            summary.push_str(&format!("; enabled {added} slot(s)"));
+        }
+        Ok(summary)
+    })
+}
+
 fn known_edit(server: &Server, args: &Args, add: bool) -> Result<String, String> {
     ensure_mapping(server)?;
     let save = arg_str(args, "save")?;
@@ -1091,6 +1141,43 @@ mod tests {
             json!({ "save": save, "currency": "nanites", "value": 100040 }),
         );
         assert!(again.contains("nothing changed"), "{again}");
+    }
+
+    #[test]
+    fn resizing_and_unlocking_go_through_one_tool() {
+        let scratch = Scratch::new("resize");
+        let save = scratch.write("save.hg", SAVE);
+        let server = mapped_server(scratch.path());
+        let save = save.display().to_string();
+
+        // The synthetic suit grid is 2x1 with both cells enabled; growing it
+        // and enabling everything is one call.
+        let report = call_ok(
+            &server,
+            "resize_inventory",
+            json!({ "save": save, "inventory": "Inventory", "width": 2, "height": 2, "unlock_all": true }),
+        );
+        assert!(report.contains("grid 2x1 -> 2x2"), "{report}");
+        assert!(report.contains("enabled 2 slot(s)"), "{report}");
+
+        let listed = call_ok(&server, "list_inventories", json!({ "save": save }));
+        assert!(listed.contains("\"width\":2"), "{listed}");
+        assert!(listed.contains("\"height\":2"), "{listed}");
+        assert!(listed.contains("\"cells\":4"), "{listed}");
+
+        // Beyond the measured grid: refused without the flag, allowed with it.
+        let error = call_err(
+            &server,
+            "resize_inventory",
+            json!({ "save": save, "inventory": "Inventory", "width": 11, "height": 2 }),
+        );
+        assert!(error.contains("beyond the 10x12"), "{error}");
+        let report = call_ok(
+            &server,
+            "resize_inventory",
+            json!({ "save": save, "inventory": "Inventory", "width": 11, "height": 2, "beyond_vanilla": true }),
+        );
+        assert!(report.contains("grid 2x2 -> 11x2"), "{report}");
     }
 
     #[test]
