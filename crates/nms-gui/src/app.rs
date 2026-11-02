@@ -232,6 +232,13 @@ enum Action {
     OpenKnownList(KnownList),
     /// Ask to restore one archive over the open save.
     RestoreBackup(PathBuf),
+    /// Pin an archive against pruning, or unpin it.
+    PinBackup {
+        path: PathBuf,
+        pinned: bool,
+    },
+    /// Ask to delete one archive.
+    DeleteBackup(PathBuf),
     Save,
     Discard,
 }
@@ -380,6 +387,8 @@ pub struct EditorApp {
     confirm_discard: bool,
     /// Archive the user asked to restore, awaiting confirmation.
     confirm_restore: Option<PathBuf>,
+    /// Archive the user asked to delete, awaiting confirmation.
+    confirm_delete: Option<PathBuf>,
 }
 
 impl EditorApp {
@@ -408,6 +417,7 @@ impl EditorApp {
             confirm_save: false,
             confirm_discard: false,
             confirm_restore: None,
+            confirm_delete: None,
         };
         app.sync_edit();
         app
@@ -424,6 +434,7 @@ impl EditorApp {
             self.confirm_save = false;
             self.confirm_discard = false;
             self.confirm_restore = None;
+            self.confirm_delete = None;
             self.pending_switch = None;
         }
         self.top_bar(ctx);
@@ -501,6 +512,11 @@ impl EditorApp {
             Action::RestoreBackup(path) => {
                 self.confirm_restore = Some(path);
                 Ok("the restore needs confirmation".to_string())
+            }
+            Action::PinBackup { path, pinned } => self.session.pin_backup(&path, pinned),
+            Action::DeleteBackup(path) => {
+                self.confirm_delete = Some(path);
+                Ok("the delete needs confirmation".to_string())
             }
             Action::Save => {
                 self.edit.moving = None;
@@ -817,6 +833,49 @@ impl EditorApp {
             }
         }
 
+        if let Some(archive) = self.confirm_delete.clone() {
+            let mut do_delete = false;
+            let mut cancel = false;
+            let name = archive
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            egui::Window::new("Delete backup")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete the restore point {name}?"));
+                    ui.label(
+                        RichText::new(
+                            "The save itself is untouched; this only removes the state the \
+                             archive holds. A pinned archive can be unpinned instead.",
+                        )
+                        .weak(),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            do_delete = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_delete {
+                self.confirm_delete = None;
+                let result = self.session.delete_backup(&archive);
+                match result {
+                    Ok(message) => self.status = Some(message),
+                    Err(message) => self.status = Some(format!("error: {message}")),
+                }
+                self.sync_edit();
+            }
+            if cancel {
+                self.confirm_delete = None;
+            }
+        }
+
         if let Some(archive) = self.confirm_restore.clone() {
             let mut do_restore = false;
             let mut cancel = false;
@@ -1002,20 +1061,77 @@ fn overview(
     } else if backups.is_empty() {
         ui.label(RichText::new("no backups yet — the first save writes one").weak());
     } else {
-        egui::Grid::new("backups").num_columns(4).spacing([16.0, 4.0]).show(ui, |ui| {
+        ui.label(
+            RichText::new(
+                "Written before every save. Pinned archives are never pruned; deleting one only \
+                 removes the restore point, not the save.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.add_space(4.0);
+        egui::Grid::new("backups").num_columns(6).spacing([14.0, 4.0]).show(ui, |ui| {
             for backup in backups {
                 let name = backup
                     .path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                ui.label(RichText::new(name).monospace().small());
+                // The state's own facts, when the archive's metadata reads: the
+                // save's name, when the game last wrote it, and how long it had
+                // been played.
+                let mut hover = format!("{name}\n{}", backup.path.display());
+                if let Some(state) = backup.state_time {
+                    hover.push_str(&format!("\nstate from {}", nms_edit::format_utc(state)));
+                }
+                if let Some(save_name) = &backup.save_name {
+                    hover.push_str(&format!("\nsave name {save_name:?}"));
+                }
+                if let Some(play) = backup.play_time {
+                    hover.push_str(&format!("\nplay time {}", format_duration(play)));
+                }
+                if backup.kept {
+                    hover.push_str("\npinned: kept out of pruning");
+                }
+                let mut label = RichText::new(&name).monospace().small();
+                if backup.kept {
+                    label = label.strong();
+                }
+                ui.label(label).on_hover_text(hover);
+
+                let state = backup
+                    .state_time
+                    .map(nms_edit::format_utc)
+                    .unwrap_or_else(|| "-".to_string());
+                ui.label(RichText::new(state).small().weak());
                 ui.label(RichText::new(bytes_text(backup.size)).small().weak());
-                ui.label(
-                    RichText::new(backup.modified.map(age_text).unwrap_or_default()).small().weak(),
-                );
-                if ui.add_enabled(editable, egui::Button::new("Restore").small()).clicked() {
+
+                if ui
+                    .add_enabled(editable, egui::Button::new("Restore").small())
+                    .on_hover_text("Replace the open save with this state (what it replaces is backed up first)")
+                    .clicked()
+                {
                     action = Some(Action::RestoreBackup(backup.path.clone()));
+                }
+                let pin_label = if backup.kept { "Unpin" } else { "Pin" };
+                let pin_hover = if backup.kept {
+                    "Let pruning remove this archive again"
+                } else {
+                    "Keep this archive out of pruning"
+                };
+                if ui
+                    .add_enabled(editable, egui::Button::new(pin_label).small())
+                    .on_hover_text(pin_hover)
+                    .clicked()
+                {
+                    action = Some(Action::PinBackup { path: backup.path.clone(), pinned: !backup.kept });
+                }
+                if ui
+                    .add_enabled(editable, egui::Button::new("Delete").small())
+                    .on_hover_text("Delete this restore point")
+                    .clicked()
+                {
+                    action = Some(Action::DeleteBackup(backup.path.clone()));
                 }
                 ui.end_row();
             }
@@ -1969,6 +2085,54 @@ mod tests {
             app.session.open.as_ref().expect("open").currencies.expect("currencies").units,
             1200
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backups_can_be_pinned_and_deleted_from_the_overview() {
+        let dir = scratch("backup-manage");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+
+        // Two edits, so there are two restore points.
+        app.apply(Action::SetCurrency(Currency::Units, 111));
+        app.apply(Action::Save);
+        app.apply(Action::SetCurrency(Currency::Units, 222));
+        app.apply(Action::Save);
+        assert_eq!(app.backups.len(), 2);
+        let oldest = app.backups.last().expect("the older archive").path.clone();
+        assert!(!app.backups.iter().any(|backup| backup.kept));
+
+        // The panel draws the state each archive holds, with the buttons.
+        let text = drawn_text(&mut app);
+        for expected in ["BACKUPS", "Restore", "Pin", "Delete"] {
+            assert!(text.contains(expected), "the overview should draw {expected:?}:\n{text}");
+        }
+        // (This save has no metadata file, so the archive carries no state
+        // facts; the real-save test covers those.)
+        // Pinning renames the archive and survives a refresh.
+        app.apply(Action::PinBackup { path: oldest.clone(), pinned: true });
+        let pinned = app
+            .backups
+            .iter()
+            .find(|backup| backup.kept)
+            .expect("one pinned archive")
+            .path
+            .clone();
+        assert!(pinned.to_string_lossy().ends_with(".keep.zip"), "{}", pinned.display());
+        let text = drawn_text(&mut app);
+        assert!(text.contains("Unpin"), "a pinned archive offers unpinning:\n{text}");
+
+        // Deleting asks first, then removes exactly that archive.
+        app.apply(Action::DeleteBackup(pinned.clone()));
+        assert_eq!(app.confirm_delete.as_deref(), Some(pinned.as_path()));
+        app.confirm_delete = None;
+        let report = app.session.delete_backup(&pinned).expect("delete");
+        assert!(report.contains("deleted"), "{report}");
+        app.sync_edit();
+        assert_eq!(app.backups.len(), 1);
+        assert!(!app.backups[0].path.to_string_lossy().contains(".keep."));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -83,8 +83,9 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "list_backups",
-            "The backups the editor has written for one save, newest first, with their paths and \
-             sizes. restore_backup takes one of these paths.",
+            "The backups the editor has written for one save, newest first, with the state each one \
+             holds (when the game wrote it, the save's name, the play time), its size, and whether \
+             it is pinned. restore_backup takes one of these paths.",
             json!({ "save": save_prop() }),
             &["save"],
         ),
@@ -196,6 +197,29 @@ pub fn definitions() -> Vec<Value> {
             &["save", "path", "value"],
         ),
         tool(
+            "pin_backup",
+            "Pin a backup against pruning, or unpin it. The editor keeps the newest ten unpinned \
+             backups per save; a pinned one is never removed and does not count against the limit. \
+             Pin a known-good state before a risky edit.",
+            json!({
+                "save": save_prop(),
+                "archive": string_prop("Archive path, or a file name from list_backups"),
+                "pinned": bool_prop("True pins it (the default), false unpins it"),
+                "confirm_live": confirm_live_prop(),
+            }),
+            &["save", "archive"],
+        ),
+        tool(
+            "delete_backup",
+            "Delete one backup archive. The save itself is untouched; only the restore point goes.",
+            json!({
+                "save": save_prop(),
+                "archive": string_prop("Archive path, or a file name from list_backups"),
+                "confirm_live": confirm_live_prop(),
+            }),
+            &["save", "archive"],
+        ),
+        tool(
             "restore_backup",
             "Replace a save with one of its backups and commit. The files being replaced are \
              archived under the pre-restore label first, so a restore is itself undoable. The \
@@ -230,6 +254,8 @@ pub fn call(server: &Server, name: &str, args: &Args) -> Option<Result<String, S
         "known_add" => known_edit(server, args, true),
         "known_remove" => known_edit(server, args, false),
         "set_field" => set_field(server, args),
+        "pin_backup" => pin_backup(args),
+        "delete_backup" => delete_backup(args),
         "restore_backup" => restore_backup(server, args),
         _ => return None,
     };
@@ -686,10 +712,17 @@ fn list_backups(args: &Args) -> Result<String, String> {
     let backups: Vec<Value> = entries
         .iter()
         .map(|entry| {
+            // The metadata file inside each archive says which state it holds;
+            // the save payload is not decompressed.
+            let summary = store.inspect(&entry.path).ok();
             json!({
                 "file": entry.path.display().to_string(),
                 "name": entry.path.file_name().map(|name| name.to_string_lossy().into_owned()),
                 "size": entry.size,
+                "pinned": entry.kept,
+                "state_from": summary.as_ref().and_then(|summary| summary.state_time()).map(nms_edit::format_utc),
+                "save_name": summary.as_ref().and_then(|summary| summary.save_name()),
+                "play_time_seconds": summary.as_ref().and_then(|summary| summary.play_time()),
                 "modified_unix": std::fs::metadata(&entry.path)
                     .and_then(|meta| meta.modified())
                     .ok()
@@ -857,6 +890,51 @@ fn set_field(server: &Server, args: &Args) -> Result<String, String> {
     })
 }
 
+fn pin_backup(args: &Args) -> Result<String, String> {
+    let save = arg_str(args, "save")?;
+    let archive = resolve_archive(&save, &arg_str(args, "archive")?)?;
+    let pinned = arg_bool(args, "pinned", true);
+    nms_edit::check_write(&archive, confirm_live(args)).map_err(|located| {
+        format!(
+            "{located}\npass confirm_live=true to change it there anyway — and only when the user has \
+             explicitly asked to edit the game's own folder."
+        )
+    })?;
+    let store = BackupStore::new(backup_root(&PathBuf::from(&save)), 10);
+    let moved = store.set_kept(&archive, pinned).map_err(|error| error.to_string())?;
+    let name = moved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(format!(
+        "{} {name}\nnote: a pinned archive is never pruned and does not count against the retention limit",
+        if pinned { "pinned" } else { "unpinned" }
+    ))
+}
+
+fn delete_backup(args: &Args) -> Result<String, String> {
+    let save = arg_str(args, "save")?;
+    let archive = resolve_archive(&save, &arg_str(args, "archive")?)?;
+    nms_edit::check_write(&archive, confirm_live(args)).map_err(|located| {
+        format!(
+            "{located}\npass confirm_live=true to delete it there anyway — and only when the user has \
+             explicitly asked to edit the game's own folder."
+        )
+    })?;
+    let store = BackupStore::new(backup_root(&PathBuf::from(&save)), 10);
+    store.delete(&archive).map_err(|error| error.to_string())?;
+    let name = archive.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(format!("deleted {name}\nthe save itself is untouched; only the restore point is gone"))
+}
+
+/// Resolve an archive argument: a path, or a file name inside the save's
+/// backup folder.
+fn resolve_archive(save: &str, archive: &str) -> Result<PathBuf, String> {
+    let given = PathBuf::from(archive);
+    let path = if given.is_file() { given } else { backup_root(&PathBuf::from(save)).join(archive) };
+    if !path.is_file() {
+        return Err(format!("no archive at {}; list_backups shows what exists", path.display()));
+    }
+    Ok(path)
+}
+
 fn restore_backup(server: &Server, args: &Args) -> Result<String, String> {
     let _ = server;
     let save = arg_str(args, "save")?;
@@ -872,19 +950,7 @@ fn restore_backup(server: &Server, args: &Args) -> Result<String, String> {
         )
     })?;
 
-    let archive = arg_str(args, "archive")?;
-    let given = PathBuf::from(&archive);
-    let archive_path = if given.is_file() {
-        given
-    } else {
-        backup_root(&save_path).join(&archive)
-    };
-    if !archive_path.is_file() {
-        return Err(format!(
-            "no archive at {}; list_backups shows what exists",
-            archive_path.display()
-        ));
-    }
+    let archive_path = resolve_archive(&save, &arg_str(args, "archive")?)?;
 
     let root = backup_root(&save_path);
     let store = BackupStore::new(root.clone(), 10);
@@ -1119,6 +1185,46 @@ mod tests {
 
         let found = call_ok(&server, "search_items", json!({ "query": "carbon" }));
         assert!(!found.contains("\"balance\""), "{found}");
+    }
+
+    #[test]
+    fn backups_can_be_listed_pinned_and_deleted() {
+        let scratch = Scratch::new("backups");
+        let save = scratch.write("save.hg", SAVE);
+        let server = mapped_server(scratch.path());
+        let save = save.display().to_string();
+
+        // A write, so there is something to manage.
+        call_ok(&server, "set_currency", json!({ "save": save, "currency": "units", "value": 4321 }));
+        let listed = call_ok(&server, "list_backups", json!({ "save": save }));
+        let listing: Value = serde_json::from_str(&listed).expect("json");
+        let backups = listing["backups"].as_array().expect("backups");
+        assert_eq!(backups.len(), 1, "{listed}");
+        assert_eq!(backups[0]["pinned"], false);
+        let name = backups[0]["name"].as_str().expect("a name").to_string();
+        assert!(name.starts_with("save_"), "{name}");
+
+        // Pinning renames it and the listing says so.
+        let report = call_ok(&server, "pin_backup", json!({ "save": save, "archive": name }));
+        assert!(report.contains("pinned"), "{report}");
+        let listed = call_ok(&server, "list_backups", json!({ "save": save }));
+        let listing: Value = serde_json::from_str(&listed).expect("json");
+        let backups = listing["backups"].as_array().expect("backups");
+        assert_eq!(backups[0]["pinned"], true, "{listed}");
+        let pinned_name = backups[0]["name"].as_str().expect("a name").to_string();
+        assert!(pinned_name.ends_with(".keep.zip"), "{pinned_name}");
+
+        // Unpinning, then deleting, both work by name.
+        call_ok(&server, "pin_backup", json!({ "save": save, "archive": pinned_name, "pinned": false }));
+        let report = call_ok(&server, "delete_backup", json!({ "save": save, "archive": name }));
+        assert!(report.contains("deleted"), "{report}");
+        let listed = call_ok(&server, "list_backups", json!({ "save": save }));
+        let listing: Value = serde_json::from_str(&listed).expect("json");
+        assert!(listing["backups"].as_array().expect("backups").is_empty(), "{listed}");
+
+        // An archive that is not there is an error, not a panic.
+        let missing = call_err(&server, "delete_backup", json!({ "save": save, "archive": "nope.zip" }));
+        assert!(missing.contains("no archive at"), "{missing}");
     }
 
     #[test]

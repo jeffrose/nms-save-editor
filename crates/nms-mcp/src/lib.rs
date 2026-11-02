@@ -44,8 +44,9 @@ regenerated. Writes to the game's live save folder — the one Steam Cloud syncs
 and tell the user where it is; that is the whole point of the refusal, and it \
 is what to offer instead of confirm_live. Pass confirm_live only when the user \
 has explicitly asked for the live folder after being told what it means. \
-Balances (units, nanites, quicksilver) are currencies: use set_currency, not \
-add_item. Item ids are the game's own ids such as ^CARBON; search_items \
+Every write leaves a timestamped backup; list_backups shows the state each one \
+holds, and pin_backup keeps a known-good one out of pruning. Balances (units, \
+nanites, quicksilver) are currencies: use set_currency, not add_item. Item ids are the game's own ids such as ^CARBON; search_items \
 resolves a name to an id. Inventories and learned lists need the community key \
 mapping, and item names need a data pack; the tools say so when one is missing.";
 

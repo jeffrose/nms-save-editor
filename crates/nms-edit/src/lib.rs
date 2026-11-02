@@ -19,7 +19,10 @@ pub mod bundle;
 pub mod player;
 pub mod safety;
 
-pub use backup::{BackupEntry, BackupError, BackupStore, format_timestamp};
+pub use backup::{
+    ArchiveSummary, ArchivedFile, BackupEntry, BackupError, BackupStore, format_timestamp, format_utc, is_kept,
+    list_archive, restore_archive,
+};
 pub use bundle::{ChangeSummary, CommitOptions, CommitReport, MetadataPlan, SaveBundle, WritePlan, now_unix};
 pub use player::{
     Cell, Currencies, Currency, Inventory, InventoryPath, InventoryRole, ItemKind, ItemSlot, KnownList, NewItem,
@@ -64,6 +67,10 @@ pub enum EditError {
     /// grid, illegal amount, …).
     #[error(transparent)]
     Player(#[from] PlayerError),
+
+    /// The planned bytes did not read back, so nothing was written.
+    #[error("refusing to write: the planned save does not read back ({0})")]
+    Verification(String),
 
     /// A write was aimed at a live, cloud-synced save location without
     /// confirmation.

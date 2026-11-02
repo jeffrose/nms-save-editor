@@ -192,6 +192,11 @@ pub struct MetadataPatch {
     pub timestamp: Option<u32>,
 }
 
+/// Word holding the Unix timestamp: the data file's modification time when the
+/// save was written. The editor refreshes it on every write, so it reads as
+/// "the state from then".
+pub const TIMESTAMP_WORD: usize = 89;
+
 /// A NUL-terminated text field inside a metadata file.
 ///
 /// Boundaries are the observed extents: `SaveName` and `Location` were seen
@@ -319,6 +324,11 @@ impl Metadata {
         read_string_field(&self.words, StringField::GAME_MODE)
     }
 
+    /// The Unix timestamp the metadata carries, when the word holds one.
+    pub fn timestamp(&self) -> Option<u64> {
+        self.words.get(TIMESTAMP_WORD).copied().filter(|word| *word != 0).map(u64::from)
+    }
+
     /// Read and decrypt metadata bytes, trying `expected` first and then other
     /// slots of the same kind (account or player).
     pub fn read(bytes: &[u8], expected: Slot) -> Result<Metadata, FormatError> {
@@ -381,7 +391,7 @@ impl Metadata {
             words[20] = (v >> 32) as u32;
         }
         if let Some(v) = patch.timestamp {
-            words[89] = v;
+            words[TIMESTAMP_WORD] = v;
         }
         if let Some(v) = &patch.save_name {
             write_string_field(&mut words, StringField::SAVE_NAME, v)?;

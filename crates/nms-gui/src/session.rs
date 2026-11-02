@@ -106,12 +106,36 @@ pub struct BackupSummary {
     pub path: PathBuf,
     /// Archive size in bytes.
     pub size: u64,
+    /// Whether the archive is pinned against pruning.
+    pub kept: bool,
     /// When the archive was last written.
     pub modified: Option<SystemTime>,
+    /// When the game last wrote the state inside, in Unix seconds.
+    pub state_time: Option<u64>,
+    /// The save's name in that state.
+    pub save_name: Option<String>,
+    /// Play time in that state, in seconds.
+    pub play_time: Option<u64>,
 }
 
 /// How many archives to keep per save; the same limit the CLI uses.
 pub const BACKUP_KEEP: usize = 10;
+
+/// Refuse a path inside a live, cloud-synced save tree.
+///
+/// Every write the window makes goes through here, so the rule is stated once:
+/// the guard applies to backups too, because deleting or renaming one changes
+/// the folder Steam Cloud syncs.
+fn ensure_writable(path: &Path) -> Result<(), String> {
+    match live_save_location(path) {
+        None => Ok(()),
+        Some(live) => Err(format!(
+            "refusing to write: {} is {}. Copy the folder and open the copy.",
+            path.display(),
+            live.describe()
+        )),
+    }
+}
 
 /// The folder a save's backups live in.
 ///
@@ -535,12 +559,40 @@ impl Session {
         let entries = store.list(&label).map_err(|error| error.to_string())?;
         Ok(entries
             .into_iter()
-            .map(|entry| BackupSummary {
-                modified: std::fs::metadata(&entry.path).and_then(|meta| meta.modified()).ok(),
-                path: entry.path,
-                size: entry.size,
+            .map(|entry| {
+                // Inspecting reads the metadata file inside each archive, which
+                // is what tells two restore points apart; the save payload is
+                // not decompressed.
+                let summary = store.inspect(&entry.path).ok();
+                BackupSummary {
+                    modified: std::fs::metadata(&entry.path).and_then(|meta| meta.modified()).ok(),
+                    kept: entry.kept,
+                    state_time: summary.as_ref().and_then(|summary| summary.state_time()),
+                    save_name: summary.as_ref().and_then(|summary| summary.save_name()),
+                    play_time: summary.as_ref().and_then(|summary| summary.play_time()),
+                    path: entry.path,
+                    size: entry.size,
+                }
             })
             .collect())
+    }
+
+    /// Pin an archive against pruning, or unpin it.
+    pub fn pin_backup(&mut self, archive: &Path, pinned: bool) -> Result<String, String> {
+        ensure_writable(archive)?;
+        let store = BackupStore::new(backup_root(archive), BACKUP_KEEP);
+        let moved = store.set_kept(archive, pinned).map_err(|error| error.to_string())?;
+        let name = moved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        Ok(if pinned { format!("pinned {name}") } else { format!("unpinned {name}") })
+    }
+
+    /// Delete one archive.
+    pub fn delete_backup(&mut self, archive: &Path) -> Result<String, String> {
+        ensure_writable(archive)?;
+        let store = BackupStore::new(backup_root(archive), BACKUP_KEEP);
+        store.delete(archive).map_err(|error| error.to_string())?;
+        let name = archive.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        Ok(format!("deleted {name}"))
     }
 
     /// Restore a backup archive over the open save.
@@ -552,13 +604,7 @@ impl Session {
         let (path, folder) = {
             let open = self.open.as_ref().ok_or_else(|| "no save is open".to_string())?;
             let path = open.entry.data_path.clone();
-            if let Some(live) = live_save_location(&path) {
-                return Err(format!(
-                    "refusing to write: {} is {}. Copy the folder and open the copy.",
-                    path.display(),
-                    live.describe()
-                ));
-            }
+            ensure_writable(&path)?;
             let folder = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
             (path, folder)
         };
@@ -1392,5 +1438,17 @@ mod tests {
         assert!(open.entry.summary.is_some(), "the refreshed metadata still decrypts");
         assert!(!open.inventories.is_empty(), "the inventories still load after a save");
         assert!(products(&session).contains(&id), "the known id survived the round trip");
+
+        // The backup the save wrote knows which state it holds: its metadata
+        // file is inside the archive, and inspecting reads it without
+        // decompressing the save payload.
+        let backups = session.backups().expect("list backups");
+        let backup = backups.first().expect("the save wrote an archive");
+        assert!(backup.state_time.is_some(), "the archive knows when the state was written");
+        assert!(backup.play_time.is_some(), "the archive knows the play time");
+        // A slot can have no chosen name; the accessor says so rather than
+        // returning an empty string.
+        assert!(backup.save_name.as_deref().is_none_or(|name| !name.is_empty()));
+        assert!(!backup.kept);
     }
 }

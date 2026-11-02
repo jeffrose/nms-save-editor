@@ -53,7 +53,7 @@ storage slot    2 (PlayerState1)
 | `nmsedit dump <save.hg> [out]` | write the raw on-disk payload |
 | `nmsedit metadata <mf_*.hg>` | decrypt a metadata file and show every field |
 | `nmsedit backup <dir>` | timestamped zip backup of a save directory |
-| `nmsedit backups <dir>` | list existing backups |
+| `nmsedit backups <dir>` | list backups with the state each holds, and manage them (`--pin`, `--unpin`, `--remove`, `--prune`) |
 | `nmsedit restore <zip> --to <dir>` | restore a backup (replaced files are backed up first) |
 | `nmsedit verify <dir>` | round-trip fidelity check over a whole save directory |
 | `nmsedit mapping <mapping.json>` | load a community key mapping |
@@ -197,6 +197,40 @@ server at a copy with `NMSEDIT_SAVE_DIR` and the guard has nothing to refuse.
 `NMSEDIT_MAPPING` and `NMSEDIT_PACK` select the key mapping and data pack, as
 they do for the CLI and GUI.
 
+## Backups
+
+Every write — CLI, GUI or MCP — takes a timestamped zip backup of the files it
+is about to replace, before anything is written. Backups live in
+`Save Backups/` next to the save, the same folder the CLI's `--backup-dir`
+defaults to, so all three faces share one history.
+
+```console
+$ nmsedit backups .
+archive                             size  state from           save                    play  pinned
+save13_20261102_132025.zip       1.8 MiB  2026-11-02 13:20:23  Our Journey Conti…  19:13:42
+save13_20261102_132021.keep.zip  1.8 MiB  2026-11-02 00:02:30  Our Journey Conti…  19:13:42  kept
+2 archive(s) in ./Save Backups
+```
+
+The `state from` column comes from the metadata file *inside* each archive, so
+a listing never decompresses a save payload, and "which backup is the one from
+before I broke it" is a question the listing answers.
+
+Managing them:
+
+| | |
+|---|---|
+| `nmsedit backups <dir> --pin <archive>` | keep an archive out of pruning (renames it to `*.keep.zip`) |
+| `nmsedit backups <dir> --unpin <archive>` | let pruning remove it again |
+| `nmsedit backups <dir> --remove <archive>` | delete one archive |
+| `nmsedit backups <dir> --prune [--keep <n>]` | apply the retention limit now |
+| `nmsedit restore <archive> --to <dir>` | put a state back (what it replaces is backed up first) |
+
+The editor keeps the newest ten unpinned archives per save; pinned ones never
+count against that and are never removed. The GUI's overview shows the same
+list with Restore, Pin and Delete buttons, and the MCP server exposes the same
+through `list_backups`, `pin_backup`, `delete_backup` and `restore_backup`.
+
 ## Guarantees
 
 Verified against 62 real files from a live 7.x save set:
@@ -216,14 +250,20 @@ Verified against 62 real files from a live 7.x save set:
 6. **Every write is backed up first** (timestamped zip, bounded retention) and
    **atomic** (temp file, flush, rename) — never a half-written save. Restores
    keep a copy of what they replace, so undoing an undo is possible too.
-7. **Changes are reported by field, not by byte count**
+   Backups are named for the moment they were taken, and each one knows the
+   state it holds, so choosing between restore points does not mean guessing.
+7. **Every write is verified before it touches the disk.** The planned bytes are
+   read back and parsed in memory first, so a save this editor cannot read is
+   one it refuses to write; the check runs before the backup, so a refusal
+   costs nothing.
+8. **Changes are reported by field, not by byte count**
    (`CommonStateData.SaveName: Our Journey Continues -> Voyager Alpha`).
-8. **Live save folders are refused by default.** A path that looks like the
+9. **Live save folders are refused by default.** A path that looks like the
    game's own save folder (or a Steam-managed Proton prefix) needs an explicit
    `--confirm-live`, because Steam Cloud would propagate the edit to every
    machine on the account. Scratch copies marked with `.nmsedit-sandbox` are
    exempt.
-9. **Player-state edits are validated before anything changes.** A full grid, an
+10. **Player-state edits are validated before anything changes.** A full grid, an
    occupied cell, an amount outside the slot or an unknown inventory leaves the
    document clean, so a refused edit cannot cause a file to be rewritten. Adding
    an item fills existing stacks first, and stack sizes are measured from the

@@ -276,6 +276,12 @@ impl SaveBundle {
             return Ok(report);
         }
 
+        // Verify the planned bytes before anything is touched: a save this
+        // editor cannot read back is not one the game will read, and finding
+        // that out after a write would mean restoring a backup to recover.
+        // This runs before the backup too, so a refusal costs nothing at all.
+        verify_plan(&plan)?;
+
         // Refuse a live save folder unless the caller said so explicitly.
         safety::check_write(&self.data_path, options.confirm_live).map_err(EditError::LiveSave)?;
 
@@ -369,6 +375,26 @@ impl SaveBundle {
     fn player_state_string(&self, path: &str) -> Option<String> {
         self.player_state_value(path).and_then(Value::as_str).map(str::to_string)
     }
+}
+
+/// Check that a plan's bytes read back as the payload they came from.
+///
+/// The fixture tests cover this path, but they run against the saves that
+/// happened to be collected; this runs on every write, including the ones into
+/// a live folder where a bad byte could not be undone afterwards.
+fn verify_plan(plan: &WritePlan) -> Result<(), EditError> {
+    let save = SaveFile::from_bytes(&plan.data)
+        .map_err(|error| EditError::Verification(format!("container: {error}")))?;
+    if save.payload != plan.payload {
+        return Err(EditError::Verification(format!(
+            "payload: read back {} bytes, wrote {}",
+            save.payload.len(),
+            plan.payload.len()
+        )));
+    }
+    // The payload Latin-1-decodes and parses, or the game would refuse it.
+    Document::parse(&save.payload).map_err(|error| EditError::Verification(format!("json: {error}")))?;
+    Ok(())
 }
 
 /// Apply a patch, dropping mirror fields that cannot be written and recording

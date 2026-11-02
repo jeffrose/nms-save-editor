@@ -202,6 +202,32 @@ fn rename_updates_json_and_metadata_and_backs_up() {
     let zip = zip::ZipArchive::new(archive).unwrap();
     assert_eq!(zip.len(), 2, "backup must contain the data file and its metadata");
 
+    // What the archive holds can be read back without decompressing the save:
+    // the metadata inside says which state it is, which is what choosing
+    // between restore points needs.
+    let store = nms_edit::BackupStore::new(backups.clone(), 3);
+    let summary = store.inspect(&backup.path).expect("inspect the archive");
+    assert_eq!(summary.files.len(), 2, "the archive holds the data file and its metadata");
+    assert_eq!(summary.slot, Some(slot));
+    let inside = summary.metadata.as_ref().expect("the archive holds the metadata file");
+    assert_eq!(inside.save_name(), before_meta.save_name(), "the state before the edit");
+    assert_eq!(inside.play_time, before_meta.play_time);
+    assert_eq!(summary.save_name().as_deref(), Some(before_meta.save_name().as_str()));
+    assert_eq!(summary.state_time(), before_meta.timestamp());
+    assert!(!summary.kept, "a fresh archive is not pinned");
+
+    // Pinning takes it out of the retention count and renames it, which is the
+    // only difference a listing shows.
+    let pinned = store.set_kept(&backup.path, true).expect("pin");
+    assert!(nms_edit::is_kept(&pinned));
+    let label = slot.data_file_name().trim_end_matches(".hg").to_string();
+    let listed = store.list(&label).expect("list");
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].kept);
+    assert_eq!(listed[0].path, pinned);
+    let unpinned = store.set_kept(&pinned, false).expect("unpin");
+    assert!(!nms_edit::is_kept(&unpinned));
+
     // Re-read everything from disk: the JSON and the metadata must agree.
     let reloaded = SaveBundle::load(&data_path, KeyMap::builtin()).unwrap();
     assert_eq!(reloaded.info().save_name.as_deref(), Some("Renamed By Test"));

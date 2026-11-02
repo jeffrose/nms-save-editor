@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use nms_edit::{
-    Cell, CommitOptions, Currency, Inventory, ItemKind, ItemSlot, KnownList, NewItem, SaveBundle, now_unix,
+    BackupEntry, Cell, CommitOptions, Currency, Inventory, ItemKind, ItemSlot, KnownList, NewItem, SaveBundle,
+    now_unix,
 };
 use nms_format::metadata::{Metadata, MetadataPatch, Slot};
 use nms_format::SaveFile;
@@ -22,7 +23,13 @@ USAGE:
     nmsedit dump <save.hg> [out]           write the raw on-disk payload
     nmsedit metadata <mf_*.hg>             decrypt and print a metadata file
     nmsedit backup <save-dir>              back up every save in a directory
-    nmsedit backups <save-dir>             list existing backups
+    nmsedit backups <save-dir>             list backups with the state each one
+                                           holds, newest first
+                                           [--pin <archive>] [--unpin <archive>]
+                                           keep an archive out of pruning
+                                           [--remove <archive>] delete one
+                                           [--prune] apply the retention limit
+                                           [--keep <n>] unpinned archives to keep
     nmsedit restore <backup.zip> --to <dir>
                                            restore an archive (replaced files are
                                            themselves backed up first)
@@ -910,31 +917,110 @@ fn cmd_backups(args: &[String]) -> Result<(), String> {
     let positional = positional(args);
     let dir = PathBuf::from(positional.first().ok_or_else(|| format!("missing directory\n\n{USAGE}"))?);
     let root = backup_root(args, &dir);
-    let store = nms_edit::BackupStore::new(root.clone(), 10);
+    let keep = option(args, "--keep").and_then(|value| value.parse().ok()).unwrap_or(10);
+    let store = nms_edit::BackupStore::new(root.clone(), keep);
 
-    let mut total = 0usize;
-    let mut labels: Vec<String> = Vec::new();
-    for name in list_dir(&root).unwrap_or_default() {
-        if let Some(label) = name.split('_').next() {
-            if !labels.contains(&label.to_string()) {
-                labels.push(label.to_string());
-            }
-        }
+    // A mutation first, then the listing, so one command both changes the pile
+    // and shows the result.
+    if let Some(archive) = option(args, "--pin").or_else(|| option(args, "--unpin")) {
+        let pin = option(args, "--pin").is_some();
+        let path = archive_path(&root, &archive)?;
+        let moved = store.set_kept(&path, pin).map_err(|error| error.to_string())?;
+        println!("{} {}", if pin { "pinned" } else { "unpinned" }, moved.display());
+        return Ok(());
     }
-    for label in labels {
-        let entries = store.list(&label).map_err(|e| e.to_string())?;
-        for entry in &entries {
-            println!(
-                "{:<28} {:>10} bytes  {}",
-                entry.path.file_name().unwrap_or_default().to_string_lossy(),
-                entry.size,
-                entry.path.display()
-            );
-        }
-        total += entries.len();
+    if let Some(archive) = option(args, "--remove") {
+        let path = archive_path(&root, &archive)?;
+        store.delete(&path).map_err(|error| error.to_string())?;
+        println!("removed {}", path.display());
+        return Ok(());
     }
-    println!("{} backup(s) in {}", total, root.display());
+    if flag(args, "--prune") {
+        let mut labels: Vec<String> =
+            store.list_all().map_err(|error| error.to_string())?.iter().filter_map(BackupEntry::label).collect();
+        labels.sort();
+        labels.dedup();
+        let mut removed = 0usize;
+        for label in &labels {
+            removed += store.prune(label).map_err(|error| error.to_string())?.len();
+        }
+        println!("pruned {removed} archive(s), keeping {keep} unpinned per save");
+    }
+
+    let entries = store.list_all().map_err(|error| error.to_string())?;
+    if entries.is_empty() {
+        println!("no backups in {}", root.display());
+        return Ok(());
+    }
+    println!(
+        "{:<30} {:>9}  {:<19}  {:<18} {:>9}  {}",
+        "archive", "size", "state from", "save", "play", "pinned"
+    );
+    for entry in &entries {
+        let summary = store.inspect(&entry.path).ok();
+        let state = summary
+            .as_ref()
+            .and_then(|summary| summary.state_time())
+            .map(nms_edit::format_utc)
+            .unwrap_or_else(|| "-".to_string());
+        let name = summary
+            .as_ref()
+            .and_then(|summary| summary.save_name())
+            .unwrap_or_else(|| "-".to_string());
+        let play = summary
+            .as_ref()
+            .and_then(|summary| summary.play_time())
+            .map(play_time_text)
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{:<30} {:>9}  {:<19}  {:<18} {:>9}  {}",
+            entry.name(),
+            size_text(entry.size),
+            state,
+            truncate(&name, 18),
+            play,
+            if entry.kept { "kept" } else { "" }
+        );
+    }
+    println!("{} archive(s) in {}", entries.len(), root.display());
     Ok(())
+}
+
+/// Resolve an archive argument: a path, or a file name inside the backup root.
+fn archive_path(root: &Path, given: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(given);
+    let path = if path.is_file() { path } else { root.join(given) };
+    if !path.is_file() {
+        return Err(format!("no archive at {}", path.display()));
+    }
+    Ok(path)
+}
+
+/// A byte count in the unit that keeps it short.
+fn size_text(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    let value = bytes as f64;
+    if value < KIB {
+        format!("{bytes} B")
+    } else if value < KIB * KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{:.1} MiB", value / (KIB * KIB))
+    }
+}
+
+/// `hours:minutes:seconds`, with hours allowed to run past 24.
+fn play_time_text(seconds: u64) -> String {
+    format!("{}:{:02}:{:02}", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+}
+
+/// Shorten a name for a fixed-width column.
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{head}…")
 }
 
 fn cmd_restore(args: &[String]) -> Result<(), String> {
