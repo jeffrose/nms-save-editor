@@ -2,18 +2,31 @@
 //!
 //! These tests only run where No Man's Sky is installed (they skip otherwise, so
 //! a clean clone stays green). They are the load-bearing evidence for the
-//! localisation parser: every table in the game must parse with the blob
-//! consumed **exactly** to the end of the file and every length field matching
-//! the text it points at. A wrong stride or entry count cannot satisfy both, so
-//! passing on the game's own files is what makes the layout a fact rather than a
-//! guess.
+//! localisation parser: every table **of every language** must parse with the
+//! blob consumed exactly to the end of the file and every length field matching
+//! the text it points at. A wrong stride, entry count or language slot cannot
+//! satisfy both, so passing on the game's own 153 tables (1.44M entries) is what
+//! makes the layout a fact rather than a guess.
 
 use std::collections::HashSet;
 
 use nms_data::{DataPack, Install, language};
 
+/// The language code a table's file name ends with (`nms_loc1_german.mbin` →
+/// `german`).
+fn language_of(name: &str) -> String {
+    name.trim_end_matches(".mbin").rsplit('_').next().unwrap_or(name).to_string()
+}
+
+/// Every table of every language parses exactly.
+///
+/// This is the test that catches a language-layout regression: each record
+/// carries one value slot per language and a table fills only its own, so a
+/// parser that assumes one fixed slot reads every language but that one as
+/// empty. (It did, until the slots were worked out — German came out with all
+/// 84,965 values blank.)
 #[test]
-fn every_english_table_parses_exactly() {
+fn every_language_table_parses_exactly() {
     let Ok(install) = Install::discover(std::env::var("NMS_INSTALL").ok().as_deref().map(std::path::Path::new))
     else {
         eprintln!("skipping: no No Man's Sky installation found (set NMS_INSTALL to point at one)");
@@ -22,14 +35,16 @@ fn every_english_table_parses_exactly() {
 
     let mut tables = 0usize;
     let mut entries = 0usize;
-    let mut samples: Vec<(String, String)> = Vec::new();
+    let mut filled_total = 0usize;
+    let mut languages: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut samples: Vec<(String, String, String)> = Vec::new();
 
     for pak_path in install.paks().unwrap() {
         let pak = nms_pak::Pak::open(&pak_path).expect("archive opens");
         let names: Vec<String> = pak
             .entries()
             .iter()
-            .filter(|entry| entry.name.starts_with("language/") && entry.name.ends_with("_english.mbin"))
+            .filter(|entry| entry.name.starts_with("language/") && entry.name.ends_with(".mbin"))
             .map(|entry| entry.name.clone())
             .collect();
 
@@ -41,9 +56,10 @@ fn every_english_table_parses_exactly() {
             assert_eq!(table.stats.parsed, table.stats.declared, "{name}: entry count mismatch");
             assert!(
                 table.is_exact(),
-                "{name}: blob consumed {} of {} bytes — the layout assumption is wrong for this table",
+                "{name}: blob consumed {} of {} bytes, {} offset mismatches — the layout assumption is wrong for this table",
                 table.stats.consumed,
-                table.stats.file_len
+                table.stats.file_len,
+                table.stats.pointer_mismatches
             );
 
             // Ids must be printable ASCII and unique; anything else means the
@@ -69,30 +85,50 @@ fn every_english_table_parses_exactly() {
                 );
             }
 
-            // Most entries carry text; a few are intentionally empty.
+            // The slot was found: a table with text must read some. (One table
+            // is genuinely sparse — tencentchinese's loc10 ships 2 translated
+            // strings of 2,505 — so the corpus-wide fraction below, not a
+            // per-table one, is the check that values are being read.)
             let filled = table.entries.iter().filter(|(_, text)| !text.is_empty()).count();
-            assert!(
-                filled * 100 / table.entries.len() >= 80,
-                "{name}: only {filled} of {} entries have text",
-                table.entries.len()
-            );
+            assert!(filled > 0, "{name}: not one entry has text — the value slot was not found");
+
+            // Every table fills exactly one language's slot; which slot is the
+            // game's language order, and the same language always uses the same
+            // one.
+            let slot = table.stats.slot.expect("a table with values fills a language slot");
+            let code = language_of(&name);
+            if let Some(previous) = languages.insert(code.clone(), slot) {
+                assert_eq!(previous, slot, "{name}: {code} changed slots between tables");
+            }
 
             if samples.len() < 4 {
                 if let Some((id, text)) = table.entries.iter().find(|(_, t)| !t.is_empty()) {
-                    samples.push((id.clone(), text.clone()));
+                    samples.push((code.clone(), id.clone(), text.clone()));
                 }
             }
             tables += 1;
             entries += table.entries.len();
+            filled_total += filled;
         }
     }
 
-    eprintln!("parsed {tables} English tables, {entries} entries exactly");
-    for (id, text) in &samples {
-        eprintln!("  sample: {id} -> {text:?}");
+    eprintln!("parsed {tables} tables in {} languages, {entries} entries exactly", languages.len());
+    for (code, id, text) in &samples {
+        eprintln!("  sample ({code}): {id} -> {text:?}");
     }
-    assert!(tables >= 3, "expected several localisation tables, found {tables}");
-    assert!(entries > 20_000, "expected a large corpus, found {entries} entries");
+    assert!(languages.len() >= 10, "expected the game's language set, found {:?}", languages.keys());
+    assert!(tables >= 100, "expected the full table set, found {tables}");
+    assert!(entries > 1_000_000, "expected a large corpus, found {entries} entries");
+    assert!(
+        filled_total * 100 / entries >= 90,
+        "only {filled_total} of {entries} values are filled — values are being read as empty"
+    );
+
+    // The slot order is the game's language order (alphabetical by file name),
+    // and English is not the first: pinning two of them documents the
+    // observation the fix rests on.
+    assert_eq!(languages.get("english"), Some(&2), "english's slot");
+    assert_eq!(languages.get("german"), Some(&4), "german's slot");
 }
 
 /// Item names come from joining each item table's keys with the text tables.
@@ -180,4 +216,29 @@ fn builds_a_pack_from_the_installation() {
     for skipped in report.skipped.iter().take(3) {
         eprintln!("  skipped: {skipped}");
     }
+
+    // The same build in another language: the id set is language-independent,
+    // the values are the language file's own. Before the per-language value
+    // slots were worked out, this build produced 84,965 empty strings.
+    let (german, _) = DataPack::build(&install, "german", 1_793_488_365).expect("German pack builds");
+    let english_keys: std::collections::BTreeSet<&String> = pack.strings.keys().collect();
+    let german_keys: std::collections::BTreeSet<&String> = german.strings.keys().collect();
+    assert_eq!(german_keys, english_keys, "the id set is language-independent");
+    let german_filled = german.strings.values().filter(|text| !text.is_empty()).count();
+    assert!(
+        german_filled * 100 / german.len() >= 90,
+        "German: only {german_filled} of {} values are filled",
+        german.len()
+    );
+    let differing = pack
+        .strings
+        .iter()
+        .filter(|(id, english)| german.strings.get(*id) != Some(*english))
+        .count();
+    assert!(
+        differing > pack.len() / 2,
+        "German text is mostly identical to English: only {differing} values differ"
+    );
+    assert!(german.item_count() > 2_000, "German item index looks short: {}", german.item_count());
+    eprintln!("german pack: {} strings, {} item names", german.len(), german.item_count());
 }

@@ -104,7 +104,9 @@ OPTIONS:
     --words                metadata: also print every non-zero word
     --install <dir>        game installation (default: found via Steam)
     --pack <file>          data pack file (default: ~/.config/nmsedit/strings.json)
-    --language <code>      language to read from the game (default: english)
+    --language <code>      language to read from the game: the file suffix,
+                           e.g. german, japanese, simplifiedchinese
+                           (default: english)
     --mapping <file>       key mapping file to extend the built-in map
                            (default: $NMSEDIT_MAPPING, then
                            $XDG_CONFIG_HOME/nmsedit/mapping.json; `data

@@ -134,11 +134,21 @@ the baseline only has to be as current as the saves it was built from.
 
 None of this is localized, by construction: the mapping's right side is a
 **code identifier** (`TotalPlayTime`, `KnownSpecials`), not display text. The
-game stores the same identifier under the same key in every language, so one
-mapping serves all of them. What *is* localized is the game text and the item
-names, and that is the other half of `data refresh`: `nmsedit data refresh
---language german` builds the text pack for that language, and the mapping is
-refreshed alongside it without changing.
+game has one executable for every language, the identifiers are compiled in,
+and the key is a hash of the identifier — so if the names were translated, a
+save written in one language would use different keys from the same save
+written in another, and saves would not load across languages. They do. One
+mapping serves all of them.
+
+What *is* localized is the game text and the item names, and the game's own
+file format says so: every localisation record carries one value slot per
+language, and each `_<language>.mbin` fills only its own
+([layout](format/localisation.md)). `nmsedit data refresh --language german`
+reads the German slots; the ids and the mapping are refreshed alongside it
+without changing. (Reading anything but English was broken until the slots were
+worked out — the parser assumed English's slot and returned empty strings for
+every other language; the installation test now parses all 153 tables in all 17
+languages exactly.)
 
 ## Reproducing it
 

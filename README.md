@@ -22,10 +22,11 @@ symptoms:
 * **native binaries** for Windows, Linux, macOS and Steam Deck — no JRE, no Wine;
 * **save integrity by construction** instead of by careful clicking;
 * **a data pipeline** that regenerates game text and item names from the
-  player's own install, so a game update is a command, not a wait (84,965 strings
-  and 7,640 item names in 137 ms today) — and the obfuscated field names, which
-  are a hash of the name, come from the same pipeline, with a baseline for the
-  keys real saves use compiled into the editor ([how](docs/findings-mapping.md));
+  player's own install, so a game update is a command, not a wait (84,965
+  strings and 7,957 item names, in 137 ms, for any language the game ships) —
+  and the obfuscated field names, which are a hash of the name, come from the
+  same pipeline, with a baseline for the keys real saves use compiled into the
+  editor ([how](docs/findings-mapping.md));
 * **automation** — a library, a CLI, and an MCP server so an agent can do the
   clicking (see [MCP](#mcp)).
 
