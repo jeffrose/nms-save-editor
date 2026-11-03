@@ -21,12 +21,13 @@ symptoms:
 
 * **native binaries** for Windows, Linux, macOS and Steam Deck — no JRE, no Wine;
 * **save integrity by construction** instead of by careful clicking;
-* **a data pipeline** that regenerates game text and item names from the
-  player's own install, so a game update is a command, not a wait (84,965
-  strings and 7,957 item names, in 137 ms, for any language the game ships) —
-  and the obfuscated field names, which are a hash of the name, come from the
-  same pipeline, with a baseline for the keys real saves use compiled into the
-  editor ([how](docs/findings-mapping.md));
+* **a data pipeline** that regenerates game text, item names and item
+  descriptions from the player's own install, so a game update is a command,
+  not a wait (84,965 strings, 7,957 item names and 3,660 descriptions, in
+  137 ms, for any language the game ships) — and the obfuscated field names,
+  which are a hash of the name, come from the same pipeline, with a baseline
+  for the keys real saves use compiled into the editor
+  ([how](docs/findings-mapping.md));
 * **automation** — a library, a CLI, and an MCP server so an agent can do the
   clicking (see [MCP](#mcp)).
 
@@ -63,7 +64,7 @@ storage slot    2 (PlayerState1)
 | `nmsedit data refresh` | reread the game's archives and rebuild the local data pack and full key mapping |
 | `nmsedit data info` | show the installed data pack |
 | `nmsedit data lookup <id>` | print game text by id |
-| `nmsedit data item <id>` | print item names by id, with the source of each name |
+| `nmsedit data item <id>` | print item names by id, with the source of each name and the game's description where it names one |
 | `nmsedit data mapping` | derive the save-key mapping from the game's own executable (field names live in `NMS.exe`; the key is a hash of the name), merging the installed file; `--saves <dir>` scopes it to those saves and builds the shipped baseline |
 | `nmsedit currencies <save.hg>` | show units, nanites and quicksilver |
 | `nmsedit currency <save.hg> <name> <value>` | set one balance and commit |
@@ -165,6 +166,12 @@ fully unlocked is not guessed at. A slot can also be moved or copied into
 another inventory ("Move into" in the slot's details): the moved slot keeps
 every field the game wrote — damage, installation, stack size — and only its
 cell changes, so a damaged technology module survives the trip intact.
+
+**Add item** is a picker over the game's own catalogue: search by name or id,
+see the item's category and description (where the game names one — 3,660 of
+the 7,957 items), and add it with a stack size taken from the save. An id can
+still be typed directly, so an item the pack does not hold — a modded one —
+still works.
 
 Editing follows a staging model: balances, suit stats, slot amounts, repairs, and
 add/remove/move item actions change only the in-memory document, and a

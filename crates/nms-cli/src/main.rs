@@ -1666,7 +1666,7 @@ fn cmd_data_info(args: &[String]) -> Result<(), String> {
     println!("game version    {}", pack.game_version.as_deref().unwrap_or("(unknown)"));
     println!("generated       {} ({})", pack.generated_at, nms_edit::format_timestamp(pack.generated_at));
     println!("strings         {} ({} with text, {} empty)", pack.len(), filled, pack.len() - filled);
-    println!("items           {} named", pack.item_count());
+    println!("items           {} named, {} with a description", pack.item_count(), pack.descriptions.len());
     let mut by_category: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for category in pack.categories.values() {
         *by_category.entry(category.as_str()).or_default() += 1;
@@ -1705,11 +1705,18 @@ fn cmd_data_item(args: &[String]) -> Result<(), String> {
     let mut missing = 0usize;
     for id in ids {
         match pack.item_name_with_source(id) {
-            Some((name, source)) => println!(
-                "{id:<32} {name:<34} [{}{}]",
-                source.label(),
-                pack.item_category(id).map(|c| format!(", {c}")).unwrap_or_default()
-            ),
+            Some((name, source)) => {
+                println!(
+                    "{id:<32} {name:<34} [{}{}]",
+                    source.label(),
+                    pack.item_category(id).map(|c| format!(", {c}")).unwrap_or_default()
+                );
+                if let Some(description) = pack.item_description(id) {
+                    for line in description.lines() {
+                        println!("    {line}");
+                    }
+                }
+            }
             None => {
                 println!("{id:<32} (no name found)");
                 missing += 1;

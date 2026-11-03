@@ -34,7 +34,7 @@ pub use mapping::{
     Mapping, MappingReport, build_mapping, extract_field_names, find_game_binary, key_for_name, mapping_for_keys,
     read_mapping_pairs, write_mapping, write_mapping_for_keys,
 };
-pub use items::{ItemIndex, ItemIndexReport, NameSource};
+pub use items::{ItemIndex, ItemIndexReport, NameSource, strip_markup};
 pub use language::Localisation;
 pub use pack::{BuildReport, DataPack, PACK_FORMAT, SourceReport};
 

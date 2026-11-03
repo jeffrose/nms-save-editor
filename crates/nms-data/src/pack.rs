@@ -65,6 +65,11 @@ pub struct DataPack {
     /// its inventory slots, so this is cross-checkable.
     #[serde(default)]
     pub categories: BTreeMap<String, String>,
+    /// `item id -> description`, where the game names one. Absent for the
+    /// items it does not describe, and empty in packs generated before this
+    /// field existed (run `data refresh` to fill it).
+    #[serde(default)]
+    pub descriptions: BTreeMap<String, String>,
 }
 
 impl DataPack {
@@ -164,6 +169,7 @@ impl DataPack {
                 .iter()
                 .filter_map(|(id, _)| index.category(id).map(|category| (id.clone(), category.label().to_string())))
                 .collect(),
+            descriptions: index.descriptions().clone(),
         };
         Ok((pack, report))
     }
@@ -187,6 +193,11 @@ impl DataPack {
     /// prefixes.
     pub fn item_name(&self, id: &str) -> Option<String> {
         self.item_name_with_source(id).map(|(text, _)| text)
+    }
+
+    /// Look up an item's description by id, where the game names one.
+    pub fn item_description(&self, id: &str) -> Option<&str> {
+        self.descriptions.get(id.trim_start_matches(['^', '!'])).map(String::as_str)
     }
 
     /// Look up an item's display name together with where it came from.
@@ -333,6 +344,7 @@ mod tests {
             strings: BTreeMap::new(),
             items: BTreeMap::new(),
             categories: BTreeMap::new(),
+            descriptions: BTreeMap::new(),
         };
         pack.strings.insert("UI_VR_RECENTRE".into(), "Recentre VR View".into());
         pack.strings.insert("UI_EMPTY".into(), String::new());
@@ -357,6 +369,7 @@ mod tests {
             strings: BTreeMap::new(),
             items: BTreeMap::new(),
             categories: BTreeMap::new(),
+            descriptions: BTreeMap::new(),
         };
         pack.items.insert("NANITE".into(), "Nanites".into());
         pack.items.insert("NANITE_CRYSTAL".into(), "Nanite Crystal".into());

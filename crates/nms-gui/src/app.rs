@@ -142,6 +142,8 @@ struct EditState {
     add_amount: String,
     add_kind: KindChoice,
     add_max: String,
+    /// Filter over the game's item names in the add-item picker.
+    add_filter: String,
     /// Slot being moved; the next empty-cell click is the destination.
     moving: Option<usize>,
 }
@@ -162,6 +164,7 @@ impl Default for EditState {
             add_amount: String::new(),
             add_kind: KindChoice::Auto,
             add_max: String::new(),
+            add_filter: String::new(),
             moving: None,
         }
     }
@@ -1834,15 +1837,90 @@ fn inventories_tab(
 
 fn add_item_form(ui: &mut egui::Ui, edit: &mut EditState, pack: Option<&DataPack>) -> Option<Action> {
     let mut action = None;
-    egui::CollapsingHeader::new("Add item").default_open(false).show(ui, |ui| {
-        egui::Grid::new("add-item").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+    egui::CollapsingHeader::new("Add item").default_open(true).show(ui, |ui| {
+        // With a pack the search box filters the game's own catalogue; the id
+        // can always be typed directly, so an item the pack does not hold (a
+        // modded one) still works.
+        if let Some(pack) = pack {
+            ui.horizontal(|ui| {
+                ui.label("Search");
+                ui.add(
+                    egui::TextEdit::singleline(&mut edit.add_filter)
+                        .hint_text("name or id, e.g. carbon")
+                        .desired_width(260.0),
+                );
+                if !edit.add_filter.is_empty() && ui.button("Clear").clicked() {
+                    edit.add_filter.clear();
+                }
+            });
+            let matches = pack.search_items(&edit.add_filter, 60);
+            if !matches.is_empty() {
+                let mut chosen = None;
+                ScrollArea::vertical()
+                    .id_salt("item-matches")
+                    .max_height(150.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (id, name) in &matches {
+                            let selected =
+                                edit.add_id.trim().trim_start_matches('^').eq_ignore_ascii_case(id);
+                            let label = match pack.item_category(id) {
+                                Some(category) => format!("{name}  ({id} · {category})"),
+                                None => format!("{name}  ({id})"),
+                            };
+                            if ui.selectable_label(selected, label).clicked() {
+                                chosen = Some((*id).to_string());
+                            }
+                        }
+                    });
+                if let Some(id) = chosen {
+                    edit.add_id = id;
+                    if edit.add_amount.trim().is_empty() {
+                        edit.add_amount = "1".to_string();
+                    }
+                }
+            }
+        }
+
+        ui.horizontal(|ui| {
             ui.label("Item id");
             ui.add(
-                egui::TextEdit::singleline(&mut edit.add_id)
-                    .hint_text("^CARBON")
-                    .desired_width(240.0),
+                egui::TextEdit::singleline(&mut edit.add_id).hint_text("item id").desired_width(200.0),
             );
-            ui.end_row();
+            let bare = edit.add_id.trim().trim_start_matches(['^', '!']);
+            if let Some(pack) = pack {
+                if !bare.is_empty() {
+                    if let Some(name) = pack.item_name(bare).filter(|name| !name.is_empty()) {
+                        ui.label(RichText::new(name).strong());
+                    }
+                    if let Some(category) = pack.item_category(bare) {
+                        ui.label(RichText::new(category).weak());
+                    }
+                }
+            }
+        });
+
+        let bare = edit.add_id.trim().trim_start_matches(['^', '!']).to_string();
+        match pack {
+            Some(pack) => {
+                if let Some(description) = pack.item_description(&bare) {
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(description).small().weak());
+                }
+            }
+            None => {
+                ui.label(
+                    RichText::new(
+                        "No data pack: run `nmsedit data refresh` to search the game's items by \
+                         name and see their descriptions.",
+                    )
+                    .small()
+                    .weak(),
+                );
+            }
+        }
+
+        egui::Grid::new("add-item").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label("Amount");
             ui.add(
                 egui::TextEdit::singleline(&mut edit.add_amount)
@@ -1868,10 +1946,6 @@ fn add_item_form(ui: &mut egui::Ui, edit: &mut EditState, pack: Option<&DataPack
             ui.end_row();
         });
 
-        let name = pack.and_then(|pack| pack.item_name(edit.add_id.trim()));
-        if let Some(name) = name.filter(|name| !name.is_empty()) {
-            ui.label(RichText::new(name).small().weak());
-        }
         let amount = parse_i64(&edit.add_amount);
         let valid = !edit.add_id.trim().is_empty() && amount.is_some();
         if ui.add_enabled(valid, egui::Button::new("Add to this inventory")).clicked() {
@@ -2044,6 +2118,13 @@ fn slot_details(
         fact(ui, "Damage", Some(format!("{:.0}%", slot.damage * 100.0)));
         fact(ui, "Installed", Some(if slot.installed { "yes" } else { "no" }.to_string()));
     });
+
+    // The game's own description for the item, where it names one — the same
+    // pane the original editor's item viewer shows.
+    if let Some(description) = pack.and_then(|pack| pack.item_description(&slot.id)) {
+        ui.add_space(4.0);
+        ui.label(RichText::new(description).small().weak());
+    }
 
     if !editable {
         return None;
@@ -2905,6 +2986,47 @@ mod tests {
         let text = drawn_text(&mut app);
         assert!(text.contains("CARBON"), "{text}");
         assert!(text.contains("^CARBON"), "the details keep the id:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_item_picker_searches_the_pack_and_shows_a_description() {
+        let dir = scratch("picker");
+        let pack_path = dir.join("strings.json");
+        std::fs::write(
+            &pack_path,
+            r#"{"format":2,"language":"english","game_version":null,"generated_at":0,"notes":"t",
+                "strings":{},"items":{"CARBON":"CARBON","CARBON_SEAL":"HERMETIC SEAL"},
+                "categories":{"CARBON":"Substance","CARBON_SEAL":"Product"},
+                "descriptions":{"CARBON":"The building block of all organic life."}}"#,
+        )
+        .expect("write pack");
+        let pack = nms_data::DataPack::load(&pack_path).expect("load pack");
+
+        let mut app = EditorApp::from_session(Session::open_dir_with(
+            &dir,
+            KeyMap::builtin(),
+            Some(pack),
+            Vec::new(),
+        ));
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Inventories;
+
+        // The search lists the game's items by name, id and category.
+        app.edit.add_filter = "seal".to_string();
+        let text = drawn_text(&mut app);
+        assert!(text.contains("HERMETIC SEAL"), "the picker lists the name:\n{text}");
+        assert!(text.contains("CARBON_SEAL"), "and its id:\n{text}");
+        assert!(text.contains("Product"), "and its category:\n{text}");
+
+        // The chosen item shows the game's own description.
+        app.edit.add_id = "CARBON".to_string();
+        let text = drawn_text(&mut app);
+        assert!(
+            text.contains("The building block of all organic life."),
+            "the chosen item's description is shown:\n{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

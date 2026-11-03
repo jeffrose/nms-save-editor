@@ -5,13 +5,14 @@ available in nmsedit's window, with the interface improvements its users have
 asked for, and the same operations exposed through the library, the CLI and the
 MCP server as they land.
 
-**Status.** G1 in progress: the exosuit stats and the inventory grid operations
-(resize, unlock, move-between, clone, per-kind measured bounds) are in the
-library, the CLI (`suit`, `resize`, `unlock`, `move-to`, `clone`), the MCP
+**Status.** G1 in progress: the exosuit stats, the inventory grid operations
+(resize, unlock, move-between, clone, per-kind measured bounds) and the item
+picker with the game's descriptions are in the library, the CLI (`suit`,
+`resize`, `unlock`, `move-to`, `clone`, `data item` with descriptions), the MCP
 (`read_suit_stats`, `set_suit_stat`, `resize_inventory`, `move_item_to`) and the
 window (grouped navigation, Suit page, grid controls, "Move into" in a slot's
-details). Next in G1: the item picker with descriptions, and a staged-change
-preview with undo.
+details, a searchable Add-item picker). Next in G1: a staged-change preview
+with undo.
 
 ## What the reference is, and what we may take from it
 

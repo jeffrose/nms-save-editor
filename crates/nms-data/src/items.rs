@@ -260,6 +260,7 @@ fn grid_base(data: &[u8], layout: &TableLayout) -> Option<usize> {
 pub struct ItemIndex {
     items: BTreeMap<String, String>,
     categories: BTreeMap<String, ItemCategory>,
+    descriptions: BTreeMap<String, String>,
     /// How the index was built, for reporting.
     pub report: ItemIndexReport,
 }
@@ -336,6 +337,45 @@ pub struct TableReport {
     pub unresolved: usize,
 }
 
+/// The description text for an item, where the game names one.
+///
+/// The description is *usually* the name key with `_NAME` replaced by `_DESC`
+/// (`UI_FUEL_1_NAME` → `UI_FUEL_1_DESC`, 3,653 of 3,660 in the observed build),
+/// but a few items use the id's own `<id>_DESC` / `UI_<id>_DESC` keys instead.
+/// Both are tried in that order and the first that resolves in the text tables
+/// wins. The text is stripped of the game's inline markup
+/// (`<TECHNOLOGY>Refiner<>` becomes `Refiner`), which is what the game itself
+/// renders. `None` means the item has no description the game names; the UI
+/// shows nothing rather than guessing.
+///
+/// `UI_<id>_DETAIL_DESC` is deliberately **not** a candidate: it exists for
+/// `ANTIMATTER`, but holds the hyperdrive-status panel ("Hyperdrive Status:
+/// UNFUELED"), which would be shown as the item's description.
+fn description_for(id: &str, name_key: &str, strings: &BTreeMap<String, String>) -> Option<String> {
+    let sibling = name_key.strip_suffix("_NAME").map(|stem| format!("{stem}_DESC"));
+    let by_id = [format!("{id}_DESC"), format!("UI_{id}_DESC")];
+    sibling
+        .into_iter()
+        .chain(by_id)
+        .find_map(|key| strings.get(&key).filter(|text| !text.is_empty()).map(|text| strip_markup(text)))
+}
+
+/// Strip the game's inline markup: everything between `<` and `>` goes,
+/// including the empty `<>` that closes a coloured span.
+pub fn strip_markup(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_tag = false;
+    for ch in text.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
 impl ItemIndex {
     /// Build the index from every extraction, plus a derivation pass over the
     /// text tables for ids no table holds.
@@ -344,6 +384,7 @@ impl ItemIndex {
     /// displays.
     pub fn build(extractions: &[ItemExtraction], strings: &BTreeMap<String, String>) -> ItemIndex {
         let mut items = BTreeMap::new();
+        let mut descriptions = BTreeMap::new();
         let mut report = ItemIndexReport::default();
 
         let mut categories = BTreeMap::new();
@@ -354,6 +395,9 @@ impl ItemIndex {
                     items.insert(id.clone(), text.clone());
                     if let Some(category) = extraction.category {
                         categories.insert(id.clone(), category);
+                    }
+                    if let Some(description) = description_for(id, key, strings) {
+                        descriptions.insert(id.clone(), description);
                     }
                     resolved += 1;
                 }
@@ -373,10 +417,13 @@ impl ItemIndex {
                 continue;
             }
             items.insert(id.to_string(), text.clone());
+            if let Some(description) = description_for(id, key, strings) {
+                descriptions.insert(id.to_string(), description);
+            }
             report.derived += 1;
         }
 
-        ItemIndex { items, categories, report }
+        ItemIndex { items, categories, descriptions, report }
     }
 
     /// The category an id belongs to, when it came from an item table.
@@ -397,6 +444,16 @@ impl ItemIndex {
     /// Look up an id against the index only.
     pub fn lookup(&self, id: &str) -> Option<&str> {
         self.items.get(id.trim_start_matches(['^', '!'])).map(String::as_str)
+    }
+
+    /// The description text for an id, where the game names one.
+    pub fn description(&self, id: &str) -> Option<&str> {
+        self.descriptions.get(id.trim_start_matches(['^', '!'])).map(String::as_str)
+    }
+
+    /// Every description, for the data pack.
+    pub fn descriptions(&self) -> &BTreeMap<String, String> {
+        &self.descriptions
     }
 
     /// Look up an id, falling back to the text tables and then to the two
@@ -704,6 +761,37 @@ mod tests {
         assert_eq!(index.lookup("MISSING"), None);
         assert_eq!(index.report.tables[0].resolved, 1);
         assert_eq!(index.report.derived, 1);
+    }
+
+    #[test]
+    fn descriptions_follow_the_name_key_or_the_id() {
+        let layout = TableLayout::PRODUCTS;
+        let data = synthetic_table(
+            &layout,
+            0x80,
+            &["STELLAR2", "WATER2", "ANTIMATTER", "PLAIN"],
+            &["UI_STELLAR2_NAME", "UI_WATER_2_NAME", "COMMODITY6_NAME", "PLAIN_NAME"],
+        );
+        let text = strings(&[
+            ("UI_STELLAR2_NAME", "CHROMATIC METAL"),
+            ("UI_STELLAR2_DESC", "A <TECHNOLOGY>processed<> metal alloy."),
+            ("UI_WATER_2_NAME", "WATER"),
+            ("WATER2_DESC", "A reactive element."),
+            ("COMMODITY6_NAME", "ANTIMATTER"),
+            ("UI_ANTIMATTER_DETAIL_DESC", "Hyperdrive Status: <FUEL>UNFUELED<>"),
+            ("PLAIN_NAME", "PLAIN THING"),
+        ]);
+        let extraction = extract_table(&data, &layout, &text);
+        let index = ItemIndex::build(&[extraction], &text);
+
+        // The name key's sibling, with the game's markup stripped.
+        assert_eq!(index.description("STELLAR2"), Some("A processed metal alloy."));
+        // The id's own key, where the name key has no sibling.
+        assert_eq!(index.description("WATER2"), Some("A reactive element."));
+        // The detail key is a hyperdrive-status panel, never a description.
+        assert_eq!(index.description("ANTIMATTER"), None);
+        assert_eq!(index.description("PLAIN"), None, "an item the game does not describe");
+        assert_eq!(index.description("MISSING"), None);
     }
 
     #[test]

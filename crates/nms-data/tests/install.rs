@@ -173,6 +173,18 @@ fn item_names_resolve_from_the_item_tables() {
     // the placeholder label; the label is the fallback for ids no table names.
     assert_eq!(pack.item_name("MAINT_REFINER").as_deref(), Some("REFINERY OUTPUT"));
     assert_eq!(pack.item_name("MAINT_TECH5").as_deref(), Some("BIO-INPUT SENSOR"));
+    // Descriptions come from the name key's `_DESC` sibling or the id's own
+    // keys, where the game names one.
+    assert!(
+        pack.item_description("STELLAR2").is_some(),
+        "chromatic metal's description is its name key's sibling"
+    );
+    assert!(pack.item_description("FUEL1").is_some(), "carbon has one");
+    assert!(
+        pack.item_description("^ANTIMATTER").is_none(),
+        "the detail key is a hyperdrive panel, not a description"
+    );
+    assert!(pack.item_description("NOT_AN_ITEM").is_none());
     // Base parts are named by the BLD_ convention, including truncated stems.
     assert_eq!(pack.item_name("BASE_BONEGARDEN").as_deref(), Some("RATTLE SPINE"));
     assert_eq!(pack.item_name("^BASE_BUBBLECLUS").as_deref(), Some("BUBBLE CLUSTER"));
