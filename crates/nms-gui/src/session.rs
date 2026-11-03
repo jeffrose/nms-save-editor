@@ -560,6 +560,38 @@ impl Session {
         })
     }
 
+    /// Stage a move (or a copy) of one slot into another inventory.
+    pub fn move_to(&mut self, from: usize, position: usize, to: usize, clone: bool) -> Result<String, String> {
+        let open = self.open.as_mut().ok_or_else(|| "no save is open".to_string())?;
+        let from_path = open
+            .inventories
+            .get(from)
+            .ok_or_else(|| "no such inventory".to_string())?
+            .path
+            .clone();
+        let to_path = open
+            .inventories
+            .get(to)
+            .ok_or_else(|| "no such inventory".to_string())?
+            .path
+            .clone();
+        let slot = if clone {
+            open.bundle.clone_item(&from_path, position, &to_path, None)
+        } else {
+            open.bundle.move_item_to(&from_path, position, &to_path, None)
+        }
+        .map_err(|error| error.to_string())?;
+        open.refresh();
+        Ok(format!(
+            "{} x{} {} to {} ({})",
+            slot.id,
+            slot.amount,
+            if clone { "copied" } else { "moved" },
+            to_path.label(),
+            slot.cell
+        ))
+    }
+
     /// Render an on-disk path for display, using readable names where known.
     pub fn path_label(&self, steps: &[RawStep]) -> String {
         describe_raw_path(steps, &self.keys)

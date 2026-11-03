@@ -545,6 +545,15 @@ pub enum PlayerError {
         measured_height: u64,
     },
 
+    /// A slot object the game would not have written (no `Index` object).
+    #[error("{inventory}: slot {index} has no Index object")]
+    MalformedSlot {
+        /// Inventory label.
+        inventory: String,
+        /// Slot array index.
+        index: usize,
+    },
+
     /// The requested inventory does not exist.
     #[error("no inventory named {0:?} (run `nmsedit inventories` to list them)")]
     UnknownInventory(String),
@@ -652,6 +661,50 @@ fn valid_cells_value(keys: &KeyMap, cells: &[Cell]) -> Value {
     Value::Array(array)
 }
 
+/// Where a slot entering `inventory` goes: the requested cell when the grid
+/// exposes it and nothing sits there, else the first free cell in display order.
+fn destination_cell(inventory: &Inventory, cell: Option<Cell>) -> Result<Cell, PlayerError> {
+    match cell {
+        Some(cell) => {
+            if !inventory.valid_cells.contains(&cell) {
+                return Err(PlayerError::CellNotInInventory {
+                    inventory: inventory.path.label().to_string(),
+                    cell,
+                });
+            }
+            if let Some(other) = inventory.slots.iter().find(|slot| slot.cell == cell) {
+                return Err(PlayerError::CellOccupied {
+                    inventory: inventory.path.label().to_string(),
+                    cell,
+                    position: other.position,
+                });
+            }
+            Ok(cell)
+        }
+        None => {
+            let occupied: Vec<Cell> = inventory.slots.iter().map(|slot| slot.cell).collect();
+            inventory
+                .valid_cells
+                .iter()
+                .copied()
+                .find(|cell| !occupied.contains(cell))
+                .ok_or_else(|| PlayerError::InventoryFull {
+                    inventory: inventory.path.label().to_string(),
+                })
+        }
+    }
+}
+
+/// Point a slot value at a cell, keeping the key spelling the game used.
+fn rewrite_cell(value: &mut Value, keys: &KeyMap, cell: Cell) -> bool {
+    let Some(index) = value.as_object_mut().and_then(|object| named_key_mut(object, keys, "Index")) else {
+        return false;
+    };
+    set_field(index, keys, "X", Value::from(cell.x));
+    set_field(index, keys, "Y", Value::from(cell.y));
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Step {
     Key(String),
@@ -663,6 +716,14 @@ fn resolve_mut<'a>(value: &'a mut Value, steps: &[Step]) -> Option<&'a mut Value
         None => Some(value),
         Some((Step::Key(key), rest)) => resolve_mut(value.as_object_mut()?.get_mut(key)?, rest),
         Some((Step::Index(index), rest)) => resolve_mut(value.as_array_mut()?.get_mut(*index)?, rest),
+    }
+}
+
+fn resolve<'a>(value: &'a Value, steps: &[Step]) -> Option<&'a Value> {
+    match steps.split_first() {
+        None => Some(value),
+        Some((Step::Key(key), rest)) => resolve(value.as_object()?.get(key)?, rest),
+        Some((Step::Index(index), rest)) => resolve(value.as_array()?.get(*index)?, rest),
     }
 }
 
@@ -1500,6 +1561,142 @@ impl SaveBundle {
         Ok(())
     }
 
+    /// Move a slot into another inventory, or another cell of the same one.
+    ///
+    /// The slot keeps every field the game wrote — damage, installation, stack
+    /// size, and anything this editor does not model — and only its `Index`
+    /// changes. Without a `cell` the first free cell of the target is used;
+    /// moving onto an occupied cell, or into a cell the target grid does not
+    /// expose, is refused. A move inside one grid only rewrites the cell, so
+    /// the slot keeps its place in the array; across inventories it is appended
+    /// to the target's slots.
+    pub fn move_item_to(
+        &mut self,
+        from: &InventoryPath,
+        index: usize,
+        to: &InventoryPath,
+        cell: Option<Cell>,
+    ) -> Result<ItemSlot, PlayerError> {
+        let source = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *from)
+            .ok_or_else(|| PlayerError::UnknownInventory(from.label().to_string()))?;
+        let mut slot = source
+            .slots
+            .iter()
+            .find(|slot| slot.position == index)
+            .cloned()
+            .ok_or_else(|| PlayerError::NoSuchSlot {
+                inventory: from.label().to_string(),
+                index,
+                len: source.slots.len(),
+            })?;
+        let target = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *to)
+            .ok_or_else(|| PlayerError::UnknownInventory(to.label().to_string()))?;
+        let destination = destination_cell(&target, cell)?;
+
+        if *from == *to {
+            // Same grid: only the cell changes, and the slot keeps its position.
+            if destination == slot.cell {
+                return Ok(slot);
+            }
+            self.move_item(from, index, destination)?;
+            slot.cell = destination;
+            return Ok(slot);
+        }
+
+        let mut value = self.slot_value(from, index).cloned().ok_or_else(|| PlayerError::NoSuchSlot {
+            inventory: from.label().to_string(),
+            index,
+            len: source.slots.len(),
+        })?;
+        if !rewrite_cell(&mut value, &self.keys, destination) {
+            return Err(PlayerError::MalformedSlot {
+                inventory: from.label().to_string(),
+                index,
+            });
+        }
+        slot.position = target.slots.len();
+        slot.cell = destination;
+        self.push_slot(to, value)?;
+        self.remove_item(from, index)?;
+        Ok(slot)
+    }
+
+    /// Copy a slot into another inventory, or another cell of the same one.
+    ///
+    /// The copy keeps every field the game wrote; the original stays where it
+    /// is.
+    pub fn clone_item(
+        &mut self,
+        from: &InventoryPath,
+        index: usize,
+        to: &InventoryPath,
+        cell: Option<Cell>,
+    ) -> Result<ItemSlot, PlayerError> {
+        let source = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *from)
+            .ok_or_else(|| PlayerError::UnknownInventory(from.label().to_string()))?;
+        let mut slot = source
+            .slots
+            .iter()
+            .find(|slot| slot.position == index)
+            .cloned()
+            .ok_or_else(|| PlayerError::NoSuchSlot {
+                inventory: from.label().to_string(),
+                index,
+                len: source.slots.len(),
+            })?;
+        let target = self
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path == *to)
+            .ok_or_else(|| PlayerError::UnknownInventory(to.label().to_string()))?;
+        let destination = destination_cell(&target, cell)?;
+
+        let mut value = self.slot_value(from, index).cloned().ok_or_else(|| PlayerError::NoSuchSlot {
+            inventory: from.label().to_string(),
+            index,
+            len: source.slots.len(),
+        })?;
+        if !rewrite_cell(&mut value, &self.keys, destination) {
+            return Err(PlayerError::MalformedSlot {
+                inventory: from.label().to_string(),
+                index,
+            });
+        }
+        slot.position = target.slots.len();
+        slot.cell = destination;
+        self.push_slot(to, value)?;
+        Ok(slot)
+    }
+
+    /// The raw JSON of one slot, exactly as the game wrote it.
+    fn slot_value(&self, path: &InventoryPath, index: usize) -> Option<&Value> {
+        let container = resolve(self.document.tree(), &path.steps)?;
+        let (_, slots) = named(container, &self.keys, "Slots")?;
+        slots.as_array()?.get(index)
+    }
+
+    /// Append a slot value to an inventory's `Slots` array.
+    fn push_slot(&mut self, to: &InventoryPath, value: Value) -> Result<(), PlayerError> {
+        let tree = self.document.tree_raw_mut();
+        let slots = resolve_mut(tree, &to.steps)
+            .and_then(|value| value.as_object_mut())
+            .and_then(|object| named_key_mut(object, &self.keys, "Slots"))
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| PlayerError::UnknownInventory(to.label().to_string()))?;
+        slots.push(value);
+        self.document.mark_dirty();
+        Ok(())
+    }
+
     // -- knowledge lists ---------------------------------------------------
 
     /// The ids in one of the "known" lists.
@@ -1907,6 +2104,79 @@ mod tests {
         // A grid no container has is refused even with the opt-in.
         let error = save.resize_inventory(&path, 17, 2, true).unwrap_err();
         assert!(matches!(error, PlayerError::BadGrid { .. }), "{error}");
+    }
+
+    #[test]
+    fn moving_between_inventories_keeps_every_slot_field() {
+        let mut save = bundle(SAVE);
+        let suit = save.inventories()[0].path.clone();
+        let ship = save
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path.label().contains("ShipOwnership"))
+            .expect("the ship grid")
+            .path
+            .clone();
+        // The suit's second slot is ^WARP, damaged and not fully installed.
+        let moved = save.move_item_to(&suit, 1, &ship, None).expect("move");
+        assert_eq!(moved.id, "^WARP");
+        assert_eq!(moved.cell, Cell::new(0, 0), "the first free cell of the ship grid");
+        assert!(moved.damage > 0.0);
+
+        let reread = reload(&save);
+        let suit_after = &reread.inventories()[0];
+        assert_eq!(suit_after.slots.len(), 1, "the slot left the suit grid");
+        let ship_after = reread
+            .inventories()
+            .into_iter()
+            .find(|inventory| inventory.path.label().contains("ShipOwnership"))
+            .expect("the ship grid");
+        assert_eq!(ship_after.slots.len(), 1);
+        let slot = &ship_after.slots[0];
+        assert_eq!(slot.id, "^WARP");
+        assert_eq!(slot.amount, 3);
+        assert_eq!(slot.max_amount, 5);
+        assert!(slot.damage > 0.0, "the damage factor survives the move");
+        assert!(!slot.installed, "the installation flag survives too");
+    }
+
+    #[test]
+    fn moving_within_a_grid_only_changes_the_cell() {
+        let mut save = bundle(SAVE);
+        let suit = save.inventories()[0].path.clone();
+        let moved = save.move_item_to(&suit, 0, &suit, Some(Cell::new(1, 1))).expect("move");
+        assert_eq!(moved.position, 0, "the slot keeps its place in the array");
+        assert_eq!(moved.cell, Cell::new(1, 1));
+        let reread = reload(&save);
+        let inventory = &reread.inventories()[0];
+        assert_eq!(inventory.slots[0].cell, Cell::new(1, 1));
+        assert_eq!(inventory.slots.len(), 2);
+    }
+
+    #[test]
+    fn cloning_duplicates_the_slot_and_leaves_the_source() {
+        let mut save = bundle(SAVE);
+        let suit = save.inventories()[0].path.clone();
+        let copy = save.clone_item(&suit, 0, &suit, None).expect("clone");
+        assert_eq!(copy.id, "^CARBON");
+        assert_ne!(copy.cell, Cell::new(0, 0), "the copy takes a free cell");
+
+        let reread = reload(&save);
+        let inventory = &reread.inventories()[0];
+        assert_eq!(inventory.slots.len(), 3);
+        assert_eq!(inventory.slots.iter().filter(|slot| slot.id == "^CARBON").count(), 2);
+    }
+
+    #[test]
+    fn a_move_onto_an_occupied_cell_is_refused() {
+        let mut save = bundle(SAVE);
+        let suit = save.inventories()[0].path.clone();
+        let error = save.move_item_to(&suit, 1, &suit, Some(Cell::new(0, 0))).unwrap_err();
+        assert!(matches!(error, PlayerError::CellOccupied { .. }), "{error}");
+        assert!(!save.document.is_dirty(), "a refused move leaves the document clean");
+        // A cell the grid does not expose is refused too.
+        let error = save.move_item_to(&suit, 0, &suit, Some(Cell::new(5, 5))).unwrap_err();
+        assert!(matches!(error, PlayerError::CellNotInInventory { .. }), "{error}");
     }
 
     #[test]

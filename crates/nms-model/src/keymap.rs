@@ -27,15 +27,22 @@ pub struct KeyMap {
     readable_to_obfuscated: HashMap<String, String>,
 }
 
-/// Root fields, written by hand.
+/// Field pairs written by hand.
 ///
 /// The generated baseline covers what the derivation can resolve; these cover
 /// what it cannot. `Version` (`F2P`), `ExpeditionContext` (`2YS`),
 /// `UsesThirdPersonCharacterCam` (`kPF`), `UsesThirdPersonShipCam` (`Wh<`),
-/// `Preset` (`brJ`) and `EasiestUsedPreset` (`qAf`) all collide with another
+/// `Preset` (`brJ`) and `EasiestUsedPreset` (`qAf`) collide with another
 /// identifier in the executable, so the derivation drops them — but a save
 /// must still show its version and summary fields on a machine with no game
-/// installed. These stand alone if the embedded baseline is ever unreadable.
+/// installed.
+///
+/// The same is true of structural keys every real save needs read: `X` (`>Qh`)
+/// and `MaxAmount` (`F9q`), without which every inventory comes out empty, the
+/// nanite balance (`7QL`), and the learned lists (`eZ<`, `4kj`, `24<`). Each
+/// pair is the community mapping's own, and each key is checked against the
+/// values the saves hold. These stand alone if the embedded baseline is ever
+/// unreadable.
 const HAND_WRITTEN_PAIRS: &[(&str, &str)] = &[
     // Root fields.
     ("F2P", "Version"),
@@ -60,6 +67,14 @@ const HAND_WRITTEN_PAIRS: &[(&str, &str)] = &[
     ("qAf", "EasiestUsedPreset"),
     ("4I:", "HardestUsedPreset"),
     ("7ND", "DifficultyPresetType"),
+    // Structural keys the derivation drops as ambiguous but that reading a
+    // real save needs: slot cells and stack sizes, one balance, learned lists.
+    (">Qh", "X"),
+    ("F9q", "MaxAmount"),
+    ("7QL", "Nanites"),
+    ("eZ<", "KnownProducts"),
+    ("4kj", "KnownTech"),
+    ("24<", "KnownSpecials"),
 ];
 
 /// The generated baseline, parsed once on first use.
@@ -185,6 +200,14 @@ mod tests {
         assert!(map.len() >= 900, "the embedded baseline did not load: {} entries", map.len());
         assert_eq!(map.readable_for("Pk4"), Some("SaveName"), "a key the derivation resolves");
         assert_eq!(map.readable_for("F2P"), Some("Version"), "a key only the hand-written pairs resolve");
+        // Structural keys the derivation drops as ambiguous: a real save cannot
+        // be read without them (slots, cells, one balance, learned lists).
+        assert_eq!(map.readable_for(">Qh"), Some("X"));
+        assert_eq!(map.readable_for("F9q"), Some("MaxAmount"));
+        assert_eq!(map.readable_for("7QL"), Some("Nanites"));
+        assert_eq!(map.candidates("KnownProducts").last(), Some("eZ<"));
+        assert_eq!(map.candidates("KnownTech").last(), Some("4kj"));
+        assert_eq!(map.candidates("KnownSpecials").last(), Some("24<"));
     }
 
     #[test]

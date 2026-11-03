@@ -135,6 +135,8 @@ struct EditState {
     grid_height: String,
     /// Whether a resize past the measured grid is allowed for this edit.
     beyond_vanilla: bool,
+    /// The inventory the "move into" controls point at.
+    move_target: usize,
     amount_input: String,
     add_id: String,
     add_amount: String,
@@ -154,6 +156,7 @@ impl Default for EditState {
             grid_width: String::new(),
             grid_height: String::new(),
             beyond_vanilla: false,
+            move_target: 0,
             amount_input: String::new(),
             add_id: String::new(),
             add_amount: String::new(),
@@ -183,6 +186,9 @@ impl EditState {
         if let Some(inventory) = open.inventories.get(self.selected_inventory) {
             self.grid_width = inventory.width.to_string();
             self.grid_height = inventory.height.to_string();
+        }
+        if self.move_target >= open.inventories.len() {
+            self.move_target = self.selected_inventory.min(open.inventories.len().saturating_sub(1));
         }
         let still_there = self.selected_slot.is_some_and(|position| {
             open.inventories
@@ -299,6 +305,13 @@ enum Action {
     /// Enable every slot of an inventory's grid.
     UnlockAll {
         inventory: usize,
+    },
+    /// Move or copy one slot into another inventory.
+    MoveTo {
+        from: usize,
+        position: usize,
+        to: usize,
+        clone: bool,
     },
     /// Replace an existing value, addressed by exact on-disk path.
     SetField {
@@ -741,6 +754,9 @@ impl EditorApp {
                 self.session.resize_inventory(inventory, width, height, beyond_vanilla)
             }
             Action::UnlockAll { inventory } => self.session.unlock_all_slots(inventory),
+            Action::MoveTo { from, position, to, clone } => {
+                self.session.move_to(from, position, to, clone)
+            }
             Action::SetField { steps, value } => self.session.set_field(&steps, value),
             Action::KnownAdd { list, id } => self.session.known_add(list, &id),
             Action::KnownRemove { list, id } => self.session.known_remove(list, &id),
@@ -1807,7 +1823,7 @@ fn inventories_tab(
             ui.add_space(8.0);
             ui.separator();
             if let Some(slot_action) =
-                slot_details(ui, slot, pack, edit, editable, inventory.is_full())
+                slot_details(ui, &open.inventories, slot, pack, edit, editable, inventory.is_full())
             {
                 action = Some(slot_action);
             }
@@ -2003,6 +2019,7 @@ fn grid(
 
 fn slot_details(
     ui: &mut egui::Ui,
+    inventories: &[Inventory],
     slot: &ItemSlot,
     pack: Option<&DataPack>,
     edit: &mut EditState,
@@ -2046,11 +2063,55 @@ fn slot_details(
         if ui.add_enabled(slot.damaged(), egui::Button::new("Repair")).clicked() {
             action = Some(Action::Repair { inventory: edit.selected_inventory, position: slot.position });
         }
-        if ui.add_enabled(!inventory_full, egui::Button::new("Move")).clicked() {
+        if ui.add_enabled(!inventory_full, egui::Button::new("Move cell")).clicked() {
             edit.moving = Some(slot.position);
         }
         if ui.button("Remove").clicked() {
             action = Some(Action::Remove { inventory: edit.selected_inventory, position: slot.position });
+        }
+    });
+
+    // Moving or copying the slot into another inventory: the original's
+    // right-click "move to another inventory", as a picker.
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("Move into");
+        egui::ComboBox::from_id_salt("move-target")
+            .selected_text(
+                inventories
+                    .get(edit.move_target)
+                    .map(|inventory| inventory.path.label().to_string())
+                    .unwrap_or_default(),
+            )
+            .show_ui(ui, |ui| {
+                for (index, inventory) in inventories.iter().enumerate() {
+                    ui.selectable_value(&mut edit.move_target, index, inventory.path.label());
+                }
+            });
+        let free = inventories.get(edit.move_target).is_some_and(|inventory| !inventory.is_full());
+        if ui
+            .add_enabled(free, egui::Button::new("Move"))
+            .on_hover_text("moves the slot to the first free cell there")
+            .clicked()
+        {
+            action = Some(Action::MoveTo {
+                from: edit.selected_inventory,
+                position: slot.position,
+                to: edit.move_target,
+                clone: false,
+            });
+        }
+        if ui
+            .add_enabled(free, egui::Button::new("Clone"))
+            .on_hover_text("copies the slot there and leaves this one in place")
+            .clicked()
+        {
+            action = Some(Action::MoveTo {
+                from: edit.selected_inventory,
+                position: slot.position,
+                to: edit.move_target,
+                clone: true,
+            });
         }
     });
     action
@@ -2736,6 +2797,32 @@ mod tests {
         assert_eq!((open.inventories[0].width, open.inventories[0].height), (2, 2));
         assert_eq!(open.inventories[0].valid_cells.len(), 4);
         assert!(app.session.dirty(), "staged grid changes must mark the save dirty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_move_into_controls_stage_a_move_and_a_clone() {
+        let dir = scratch("move-to");
+        let mut app = app(&dir);
+        app.session.select(0);
+        app.sync_edit();
+        app.tab = Tab::Inventories;
+        app.edit.selected_slot = Some(0);
+
+        let text = drawn_text(&mut app);
+        for expected in ["Move into", "Clone", "Move cell"] {
+            assert!(text.contains(expected), "the slot details should draw {expected:?}:\n{text}");
+        }
+
+        // The suit grid is 2x1 with (0,0) taken; a move goes to the first free
+        // cell, and a clone then fills the freed one.
+        app.apply(Action::MoveTo { from: 0, position: 0, to: 0, clone: false });
+        let open = app.session.open.as_ref().expect("open");
+        assert_eq!(open.inventories[0].slots[0].cell, Cell::new(1, 0));
+
+        app.apply(Action::MoveTo { from: 0, position: 0, to: 0, clone: true });
+        let open = app.session.open.as_ref().expect("open");
+        assert_eq!(open.inventories[0].slots.len(), 2, "the clone duplicates the slot");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

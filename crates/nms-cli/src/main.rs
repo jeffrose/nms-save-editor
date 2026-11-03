@@ -66,6 +66,10 @@ derives one from your own game; --mapping overrides it):
                                            in the player's inventories
     nmsedit move-item <save.hg> <inv> <slot> <x> <y>
                                            move a slot to another grid cell
+    nmsedit move-to <save.hg> <inv> <slot> <to-inv> [<x,y>]
+                                           move a slot into another inventory
+    nmsedit clone <save.hg> <inv> <slot> <to-inv> [<x,y>]
+                                           copy a slot into another inventory
     nmsedit resize <save.hg> <inv> <width> <height>
                                            change an inventory's grid size;
                                            past the game's own grids needs
@@ -171,6 +175,8 @@ fn main() -> ExitCode {
         Some("set-amount") => run(&args, cmd_set_amount),
         Some("repair") => run(&args, cmd_repair),
         Some("move-item") => run(&args, cmd_move_item),
+        Some("move-to") => run(&args, cmd_move_to),
+        Some("clone") => run(&args, cmd_clone),
         Some("resize") => run(&args, cmd_resize),
         Some("unlock") => run(&args, cmd_unlock),
         Some("known") => run(&args, cmd_known),
@@ -791,6 +797,49 @@ fn cmd_move_item(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     println!("moved {}[{index}] to {cell}", inventory.path);
+    commit_and_report(args, &mut bundle, &data_path)
+}
+
+/// Move a slot into another inventory.
+fn cmd_move_to(args: &[String]) -> Result<(), String> {
+    move_or_clone(args, false)
+}
+
+/// Copy a slot into another inventory.
+fn cmd_clone(args: &[String]) -> Result<(), String> {
+    move_or_clone(args, true)
+}
+
+fn move_or_clone(args: &[String], clone: bool) -> Result<(), String> {
+    let positional = positional(args);
+    let path = positional.first().ok_or_else(|| format!("missing save path\n\n{USAGE}"))?;
+    let name = positional.get(1).ok_or_else(|| format!("missing inventory name\n\n{USAGE}"))?;
+    let index = positional.get(2).ok_or_else(|| format!("missing slot index\n\n{USAGE}"))?;
+    let target = positional.get(3).ok_or_else(|| format!("missing target inventory\n\n{USAGE}"))?;
+    let index: usize = index.parse().map_err(|_| format!("slot index must be a whole number, got {index:?}"))?;
+    let cell = match positional.get(4) {
+        Some(text) => Some(parse_cell(text)?),
+        None => None,
+    };
+
+    let data_path = PathBuf::from(path);
+    let mut bundle = load_bundle(args, path)?;
+    let from = inventory_or_error(&bundle, name)?;
+    let to = inventory_or_error(&bundle, target)?;
+    let slot = if clone {
+        bundle.clone_item(&from.path, index, &to.path, cell)
+    } else {
+        bundle.move_item_to(&from.path, index, &to.path, cell)
+    }
+    .map_err(|e| e.to_string())?;
+    println!(
+        "{} x{} {} to {} at {}",
+        slot.id,
+        slot.amount,
+        if clone { "cloned" } else { "moved" },
+        to.path,
+        slot.cell
+    );
     commit_and_report(args, &mut bundle, &data_path)
 }
 

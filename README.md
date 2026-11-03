@@ -71,6 +71,8 @@ storage slot    2 (PlayerState1)
 | `nmsedit suit <save.hg> <stat> <value>` | set one of them and commit |
 | `nmsedit resize <save.hg> <inv> <width> <height>` | change an inventory's grid size (`--beyond-vanilla` past the game's own) |
 | `nmsedit unlock <save.hg> <inv>` | enable every slot in an inventory's grid |
+| `nmsedit move-to <save.hg> <inv> <slot> <to-inv>` | move a slot into another inventory |
+| `nmsedit clone <save.hg> <inv> <slot> <to-inv>` | copy a slot into another inventory |
 | `nmsedit inventories <save.hg> [--all]` | list inventories, their grids and roles |
 | `nmsedit inventory <save.hg> <name>` | list one inventory's slots, with item names |
 | `nmsedit add-item <save.hg> <inv> <id> <amount>` | add items, filling stacks first (`--kind`, `--max`, `--cell`) |
@@ -159,7 +161,10 @@ staged like every other edit. A resize past the size the game itself writes for
 that kind of inventory needs the "beyond vanilla" opt-in, because the game's own
 UI cannot address the extra cells and the save can break; the sizes the editor
 knows are the ones measured from real saves, and a kind the corpus never showed
-fully unlocked is not guessed at.
+fully unlocked is not guessed at. A slot can also be moved or copied into
+another inventory ("Move into" in the slot's details): the moved slot keeps
+every field the game wrote — damage, installation, stack size — and only its
+cell changes, so a damaged technology module survives the trip intact.
 
 Editing follows a staging model: balances, suit stats, slot amounts, repairs, and
 add/remove/move item actions change only the in-memory document, and a

@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use nms_edit::{
-    now_unix, normalize_id, BackupStore, CommitOptions, Currency, Inventory, ItemKind, KnownList, NewItem,
+    now_unix, normalize_id, BackupStore, Cell, CommitOptions, Currency, Inventory, ItemKind, KnownList, NewItem,
     SaveBundle,
 };
 use serde_json::{json, Value};
@@ -195,6 +195,21 @@ pub fn definitions() -> Vec<Value> {
             &["save", "inventory", "width", "height"],
         ),
         tool(
+            "move_item_to",
+            "Move or clone one inventory slot into another inventory (or another place in the same \
+             one). The slot keeps every field the game wrote — damage, installation, stack size — \
+             and only its cell changes; without a cell the first free cell is used.",
+            json!({
+                "save": save_prop(),
+                "inventory": string_prop("Inventory the slot is in, from list_inventories"),
+                "slot": integer_prop("Array index of the slot, from read_inventory"),
+                "to_inventory": string_prop("Inventory to move it into"),
+                "cell": string_prop("Destination cell as \"x,y\"; the first free cell when omitted"),
+                "clone": bool_prop("Copy the slot instead of moving it"),
+            }),
+            &["save", "inventory", "slot", "to_inventory"],
+        ),
+        tool(
             "known_add",
             "Mark an id as learned in one of the player's lists and commit. The list is created \
              only where the save already has it.",
@@ -283,6 +298,7 @@ pub fn call(server: &Server, name: &str, args: &Args) -> Option<Result<String, S
         "remove_item" => remove_item(server, args),
         "repair_all" => repair_all(server, args),
         "resize_inventory" => resize_inventory(server, args),
+        "move_item_to" => move_item_to(server, args),
         "known_add" => known_edit(server, args, true),
         "known_remove" => known_edit(server, args, false),
         "set_field" => set_field(server, args),
@@ -389,6 +405,14 @@ fn arg_u64(args: &Args, name: &str) -> Result<u64, String> {
 
 fn arg_bool(args: &Args, name: &str, default: bool) -> bool {
     args.get(name).and_then(Value::as_bool).unwrap_or(default)
+}
+
+/// Parse a `"x,y"` cell argument.
+fn parse_cell_arg(text: &str) -> Result<Cell, String> {
+    let (x, y) = text.split_once(',').ok_or_else(|| format!("cell must be \"x,y\", got {text:?}"))?;
+    let x: u64 = x.trim().parse().map_err(|_| format!("cell column must be a whole number, got {x:?}"))?;
+    let y: u64 = y.trim().parse().map_err(|_| format!("cell row must be a whole number, got {y:?}"))?;
+    Ok(Cell::new(x, y))
 }
 
 // ---------------------------------------------------------------------------
@@ -908,6 +932,41 @@ fn resize_inventory(server: &Server, args: &Args) -> Result<String, String> {
     })
 }
 
+fn move_item_to(server: &Server, args: &Args) -> Result<String, String> {
+    ensure_mapping(server)?;
+    let save = arg_str(args, "save")?;
+    let name = arg_str(args, "inventory")?;
+    let index = arg_usize(args, "slot")?;
+    let target = arg_str(args, "to_inventory")?;
+    let cell = match arg_opt_str(args, "cell") {
+        Some(text) => Some(parse_cell_arg(&text)?),
+        None => None,
+    };
+    let clone = arg_bool(args, "clone", false);
+    edit_and_commit(server, &save, |bundle| {
+        let from = bundle
+            .inventory(&name)
+            .ok_or_else(|| format!("no inventory named {name:?} (use list_inventories)"))?;
+        let to = bundle
+            .inventory(&target)
+            .ok_or_else(|| format!("no inventory named {target:?} (use list_inventories)"))?;
+        let slot = if clone {
+            bundle.clone_item(&from.path, index, &to.path, cell)
+        } else {
+            bundle.move_item_to(&from.path, index, &to.path, cell)
+        }
+        .map_err(|error| error.to_string())?;
+        Ok(format!(
+            "{} x{} {} to {} at {}",
+            slot.id,
+            slot.amount,
+            if clone { "cloned" } else { "moved" },
+            to.path,
+            slot.cell
+        ))
+    })
+}
+
 fn known_edit(server: &Server, args: &Args, add: bool) -> Result<String, String> {
     ensure_mapping(server)?;
     let save = arg_str(args, "save")?;
@@ -1058,6 +1117,18 @@ mod tests {
                     "Width": 2,
                     "Height": 1
                 },
+                "ShipOwnership": [
+                    {
+                        "Inventory": {
+                            "Slots": [],
+                            "ValidSlotIndices": [{"X":0,"Y":0},{"X":1,"Y":0}],
+                            "Class": {"InventoryClass": "B"},
+                            "StackSizeGroup": {"InventoryStackSizeGroup": "Ship"},
+                            "Width": 2,
+                            "Height": 1
+                        }
+                    }
+                ],
                 "KnownProducts": ["^A"],
                 "KnownTech": [],
                 "KnownSpecials": [],
@@ -1178,6 +1249,51 @@ mod tests {
             json!({ "save": save, "inventory": "Inventory", "width": 11, "height": 2, "beyond_vanilla": true }),
         );
         assert!(report.contains("grid 2x2 -> 11x2"), "{report}");
+    }
+
+    #[test]
+    fn a_move_between_inventories_goes_through_the_tool() {
+        let scratch = Scratch::new("move");
+        let save = scratch.write("save.hg", SAVE);
+        let server = mapped_server(scratch.path());
+        let save = save.display().to_string();
+
+        let listed = call_ok(&server, "list_inventories", json!({ "save": save }));
+        assert!(listed.contains("ShipOwnership[0].Inventory"), "{listed}");
+
+        // Clone the suit's ^CARBON into the ship grid; the source stays.
+        let report = call_ok(
+            &server,
+            "move_item_to",
+            json!({ "save": save, "inventory": "Inventory", "slot": 0, "to_inventory": "ShipOwnership[0].Inventory", "clone": true }),
+        );
+        assert!(report.contains("^CARBON"), "{report}");
+        assert!(report.contains("cloned"), "{report}");
+        assert!(report.contains("at (0, 0)"), "the first free cell: {report}");
+        let suit = call_ok(&server, "read_inventory", json!({ "save": save, "inventory": "Inventory" }));
+        assert!(suit.contains("\"id\":\"^CARBON\""), "the clone leaves the source: {suit}");
+
+        // A cell the target does not expose is refused.
+        let error = call_err(
+            &server,
+            "move_item_to",
+            json!({ "save": save, "inventory": "Inventory", "slot": 0, "to_inventory": "ShipOwnership[0].Inventory", "cell": "9,9" }),
+        );
+        assert!(error.contains("not a valid slot"), "{error}");
+
+        // Move it too: the ship's first cell is taken, so it lands in the next.
+        let report = call_ok(
+            &server,
+            "move_item_to",
+            json!({ "save": save, "inventory": "Inventory", "slot": 0, "to_inventory": "ShipOwnership[0].Inventory" }),
+        );
+        assert!(report.contains("moved"), "{report}");
+        assert!(report.contains("at (1, 0)"), "{report}");
+        let slots =
+            call_ok(&server, "read_inventory", json!({ "save": save, "inventory": "ShipOwnership[0].Inventory" }));
+        assert_eq!(slots.matches("^CARBON").count(), 2, "{slots}");
+        let suit = call_ok(&server, "read_inventory", json!({ "save": save, "inventory": "Inventory" }));
+        assert!(!suit.contains("^CARBON"), "the move empties the source: {suit}");
     }
 
     #[test]

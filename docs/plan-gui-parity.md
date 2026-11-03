@@ -6,11 +6,12 @@ asked for, and the same operations exposed through the library, the CLI and the
 MCP server as they land.
 
 **Status.** G1 in progress: the exosuit stats and the inventory grid operations
-(resize, unlock, per-kind measured bounds) are in the library, the CLI (`suit`,
-`resize`, `unlock`), the MCP (`read_suit_stats`, `set_suit_stat`,
-`resize_inventory`) and the window (grouped navigation, Suit page, grid
-controls). Next in G1: move between inventories, clone, the item picker, and a
-staged-change preview.
+(resize, unlock, move-between, clone, per-kind measured bounds) are in the
+library, the CLI (`suit`, `resize`, `unlock`, `move-to`, `clone`), the MCP
+(`read_suit_stats`, `set_suit_stat`, `resize_inventory`, `move_item_to`) and the
+window (grouped navigation, Suit page, grid controls, "Move into" in a slot's
+details). Next in G1: the item picker with descriptions, and a staged-change
+preview with undo.
 
 ## What the reference is, and what we may take from it
 

@@ -403,6 +403,132 @@ fn suit_stats_read_from_real_saves() {
     eprintln!("read suit stats from {checked} saves");
 }
 
+/// A slot moved between two real inventories and back keeps every field the
+/// game wrote, and the commit reads its own bytes back.
+#[test]
+fn a_slot_moves_between_real_inventories_and_back() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures (run tools/fetch-fixtures.sh)");
+        return;
+    };
+    let keys = KeyMap::builtin();
+    let shape = |inventory: &nms_edit::Inventory| {
+        let mut out: Vec<(String, i64, u64, u64, i64, bool)> = inventory
+            .slots
+            .iter()
+            .map(|slot| {
+                (slot.id.clone(), slot.amount, slot.cell.x, slot.cell.y, slot.max_amount, slot.installed)
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    let mut checked = 0usize;
+    for slot in player_slots(&dir) {
+        let scratch = scratch_copy(&dir, slot, "move");
+        let data_path = scratch.join(slot.data_file_name());
+        let mut bundle = SaveBundle::load(&data_path, keys.clone()).unwrap_or_else(|e| panic!("{slot}: {e}"));
+        let inventories = bundle.inventories();
+        let Some(from) = inventories.iter().find(|inventory| inventory.path.label() == "Inventory") else {
+            continue;
+        };
+        let Some(to) = inventories.iter().find(|inventory| inventory.path.label() == "Inventory_TechOnly")
+        else {
+            continue;
+        };
+        if from.slots.is_empty() || to.is_full() {
+            continue;
+        }
+        let before_from = shape(from);
+        let before_to = shape(to);
+        let source = from.slots[0].clone();
+
+        let moved = bundle
+            .move_item_to(&from.path, source.position, &to.path, None)
+            .unwrap_or_else(|e| panic!("{slot}: move: {e}"));
+        assert_eq!(moved.installed, source.installed);
+        let back = bundle
+            .move_item_to(&to.path, moved.position, &from.path, Some(source.cell))
+            .unwrap_or_else(|e| panic!("{slot}: move back: {e}"));
+        assert_eq!(back.id, source.id);
+        assert_eq!(back.cell, source.cell);
+        assert!((back.damage - source.damage).abs() < 1e-9, "{slot}: damage changed");
+
+        // The commit re-reads its own bytes before writing.
+        let report = bundle
+            .commit(&CommitOptions {
+                backup_root: Some(scratch.join("backups")),
+                keep_backups: 3,
+                timestamp: Some(1_793_488_365),
+                dry_run: false,
+            })
+            .unwrap_or_else(|e| panic!("{slot}: commit: {e}"));
+        assert!(!report.changes.fields_changed.is_empty(), "{slot}: a move must report its fields");
+
+        let after = SaveBundle::load(&data_path, keys.clone()).unwrap();
+        let after_inventories = after.inventories();
+        assert_eq!(
+            shape(after_inventories.iter().find(|i| i.path.label() == "Inventory").unwrap()),
+            before_from,
+            "{slot}: the suit grid changed"
+        );
+        assert_eq!(
+            shape(after_inventories.iter().find(|i| i.path.label() == "Inventory_TechOnly").unwrap()),
+            before_to,
+            "{slot}: the technology grid changed"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+        checked += 1;
+    }
+    eprintln!("moved a slot out and back in {checked} saves");
+    assert!(checked > 0, "no save had a movable slot");
+}
+
+/// The built-in keys alone must read everything the window shows: balances,
+/// inventory slots and the learned lists. The derivation drops several of those
+/// keys as ambiguous in the executable, so the hand-written fallback covers
+/// them — this test keeps that true, because otherwise a machine with no
+/// mapping file shows empty grids and a missing nanite balance.
+#[test]
+fn the_builtin_keys_read_what_the_window_shows() {
+    let Some(dir) = account_dir() else {
+        eprintln!("skipping: no fixtures (run tools/fetch-fixtures.sh)");
+        return;
+    };
+    let mut checked = 0usize;
+    for slot in player_slots(&dir) {
+        let bundle = SaveBundle::load(&dir.join(slot.data_file_name()), KeyMap::builtin())
+            .unwrap_or_else(|e| panic!("{slot}: {e}"));
+        let context = bundle.player_context().expect("a player context");
+        let raw_len = |path: &str| {
+            bundle.get(path).ok().and_then(|value| value.as_array()).map(Vec::len).unwrap_or(0)
+        };
+
+        // Balances.
+        bundle.currencies().unwrap_or_else(|e| panic!("{slot}: currencies: {e}"));
+
+        // The suit's main grid parses every slot the raw JSON holds.
+        let raw_slots = raw_len(&format!("{context}.PlayerStateData.Inventory.Slots"));
+        let parsed = bundle.inventory("Inventory").map(|inventory| inventory.slots.len()).unwrap_or(0);
+        assert_eq!(parsed, raw_slots, "{slot}: slots must parse with the built-in keys only");
+
+        // Every learned list the save carries reads.
+        for list in nms_edit::KnownList::ALL {
+            let path = format!("{context}.PlayerStateData.{}", list.field());
+            let raw = raw_len(&path);
+            match bundle.known(list) {
+                Ok(ids) => assert_eq!(ids.len(), raw, "{slot}: {list:?}"),
+                Err(error) => {
+                    assert_eq!(raw, 0, "{slot}: {list:?} did not read with the built-in keys: {error}")
+                }
+            }
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "no player saves found");
+    eprintln!("read balances, slots and learned lists with the built-in keys in {checked} saves");
+}
+
 #[test]
 fn every_inventory_obeys_the_games_own_rules() {
     let Some(dir) = account_dir() else {
