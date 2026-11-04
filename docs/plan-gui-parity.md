@@ -11,8 +11,8 @@ picker with the game's descriptions are in the library, the CLI (`suit`,
 `resize`, `unlock`, `move-to`, `clone`, `data item` with descriptions), the MCP
 (`read_suit_stats`, `set_suit_stat`, `resize_inventory`, `move_item_to`) and the
 window (grouped navigation, Suit page, grid controls, "Move into" in a slot's
-details, a searchable Add-item picker). Next in G1: a staged-change preview
-with undo.
+details, a searchable Add-item picker). Next in G1: **item icons** in the picker
+and grids, then a staged-change preview with undo.
 
 ## What the reference is, and what we may take from it
 
@@ -115,7 +115,8 @@ on-disk keys stay the source of truth). "Today" is what exists now.
 | **Discovery** — Known Technology / Products tables with Add / Remove, Known Words matrix (Gek/Vy'keen/Korvax/Atlas), 16 Known Glyph toggles | `KnownTech`, `KnownProducts`, `KnownSpecials`, `SeenBaseBuildingObjects`, `KnownRefinerRecipes`, `KnownWordGroups[]` (`Group`, `Races[9]`), glyphs (field to locate) | Known items tab = five lists with filter + add/remove | Rebuild as the four-panel page; word meanings and glyph storage are data/format tasks (below) |
 | **Milestones / Reputation** — 9 milestones, 6 kill counters, 6 factions × standing / missions / words / systems / … | `PlayerStateData.Stats[]` groups: `^GLOBAL_STATS` (472 entries), `^TELEMETRY_STATS`, per-planet groups; entries `{Id, Value}` | Nothing | Group picker + form; stat id → label list is a data task |
 | **Account** — season / Twitch / platform reward unlocks (checkboxes) | `accountdata.hg` (plain JSON, own document) | Read-only file for `info`; no editing | Account document type in `nms-edit` (backup + metadata rules apply); unlock toggles; account-wide warning |
-| **Item Details dialog** — type, category, name, id, quantity, subtitle, build cost, description | text pack + item tables | Item names + categories in the UI | Resolve description/subtitle/build-cost keys; show in picker and slot tooltip |
+| **Item Details dialog** — type, category, name, id, quantity, subtitle, build cost, description | text pack + item tables | Names, categories and **descriptions** (3,660 of 7,957 items, markup stripped) in the picker and a slot's details | Subtitles and build costs; a proper details dialog |
+| **Item icons** — every screen that names an item | `TEXTURES/UI/FRONTEND/ICONS/…/*.DDS` in the paks, 256×256 BC7_UNORM, referenced from the item-table records (7,964 UI icons on this install) | Nothing | Resolve the record→icon reference (the one measurement left, same kind as the name key), extract + decode locally (MIT/Apache `dds` crate), cache small PNGs under `~/.config/nmsedit/icons/`, load lazily as egui textures in the picker rows, grid cells and the details pane |
 | **Coordinate Viewer** — galaxy, galactic address, portal address, 12-glyph strip, Search, Save/Warp | `GalacticAddress` structures throughout the save | Nothing | Address codec (voxel ↔ string ↔ glyphs); search over visited systems (`TeleportEndpoints`, discoveries) |
 | **JSON Editor** — tree + raw editor | whole document | JSON tab with search + typed edit | Keep; add page links ("open this entity in JSON") |
 | **Look & feel** — dark/light, inventory scaling | — | Fixed egui theme | Theme toggle + scale control |
@@ -152,7 +153,8 @@ name cannot be verified.
 
 | Data | Source | Status |
 |---|---|---|
-| Item descriptions, subtitles, build costs | item tables' text keys + text pack | to map (same exercise as item names) |
+| Item descriptions, subtitles, build costs | item tables' text keys + text pack | descriptions done (name-key `_DESC` sibling, or the id's own keys); subtitles and build costs to map |
+| Item icons | `TEXTURES/UI/FRONTEND/ICONS/…/*.DDS` in the paks (256×256 BC7), referenced from the item-table records | paths measured, the per-record reference layout to work out; decode via the MIT/Apache `dds` crate |
 | Word meanings (`^TRA_A` → "a") | game word tables (MBIN, name TBD) | to locate |
 | Stat / milestone labels (`^CARGO_SPECIAL` → "…") | stats table (MBIN, name TBD) or curated from ids | to locate |
 | Frigate trait names (`TraitIDs`) | game trait table | to locate |
@@ -167,9 +169,10 @@ makes sense → GUI → tests (fixture round-trips + headless render tests).
 
 * **G1 — Entity infrastructure + Suit page.** Library: container API, seeds,
   inventory resize/unlock/move-between/clone, recharge. UI: Suit page (stats,
-  section picker, improved grid), item picker with search + description
-  (pending the description keys), change preview. This phase makes the most
-  used screen good and builds the machinery the rest of the fleet reuses.
+  section picker, improved grid), item picker with search, descriptions and
+  **icons** (extracted from the player's own install — HG assets are never
+  committed), change preview. This phase makes the most used screen good and
+  builds the machinery the rest of the fleet reuses.
 * **G2 — Fleet pages.** Multitool, Ships, Freighter, Frigates, Vehicles,
   Squadron, Companions, including delete/export/import (the M7 envelope).
   Data: trait names.
